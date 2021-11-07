@@ -53,9 +53,9 @@ use smithay::{
         Logical, Point,
     },
     wayland::{
-        SERIAL_COUNTER as SCOUNTER,
         output::{Mode, PhysicalProperties},
         seat::CursorImageStatus,
+        SERIAL_COUNTER as SCOUNTER,
     },
 };
 #[cfg(feature = "egl")]
@@ -72,8 +72,8 @@ use crate::{drawing::*, window_map::WindowMap};
 use crate::{
     render::render_background,
     render::render_layers_and_windows,
-    render::top_window_get_bbox,
     render::render_window_select,
+    render::top_window_get_bbox,
     state::{Backend, ConsolationState},
 };
 
@@ -254,7 +254,6 @@ pub fn run_udev(log: Logger) {
     #[cfg(feature = "xwayland")]
     state.start_xwayland();
 
-
     /*
      * And run our loop
      */
@@ -273,9 +272,10 @@ pub fn run_udev(log: Logger) {
             state.output_map.borrow_mut().refresh();
             let focused_window = state.window_map.borrow_mut().windows().next();
             if focused_window.is_some() {
-                state.keyboard.set_focus(focused_window.unwrap().get_surface(),serial);
-            }else{
-
+                state
+                    .keyboard
+                    .set_focus(focused_window.unwrap().get_surface(), serial);
+            } else {
             }
         }
     }
@@ -580,18 +580,17 @@ impl ConsolationState<UdevData> {
             )
             .expect("Unable to upload FPS texture");
 
-
-    let menu_selected_texture = import_bitmap(
-        &mut renderer.borrow_mut(),
-        &image::io::Reader::with_format(
-            std::io::Cursor::new(MENU_SELECTED_PNG),
-            image::ImageFormat::Png,
-        )
-        .decode()
-        .unwrap()
-        .to_rgba8(),
-    )
-    .expect("Unable to upload selected texture");
+            let menu_selected_texture = import_bitmap(
+                &mut renderer.borrow_mut(),
+                &image::io::Reader::with_format(
+                    std::io::Cursor::new(MENU_SELECTED_PNG),
+                    image::ImageFormat::Png,
+                )
+                .decode()
+                .unwrap()
+                .to_rgba8(),
+            )
+            .expect("Unable to upload selected texture");
 
             let font_texture = import_bitmap(
                 &mut renderer.borrow_mut(),
@@ -813,8 +812,7 @@ fn render_surface(
     logger: &slog::Logger,
     menu_open: bool,
     menu_index: i32,
-) -> Result<(), SwapBuffersError> 
-{
+) -> Result<(), SwapBuffersError> {
     surface.surface.frame_submitted()?;
 
     let output = output_map
@@ -839,7 +837,8 @@ fn render_surface(
             |renderer, frame| {
                 render_background(renderer, frame);
                 if menu_open {
-                    render_window_select(renderer,
+                    render_window_select(
+                        renderer,
                         frame,
                         window_map,
                         output_geometry,

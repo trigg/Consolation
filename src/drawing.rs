@@ -20,9 +20,7 @@ use smithay::{
             SurfaceAttributes, TraversalAction,
         },
         seat::CursorImageAttributes,
-        shell::{
-            wlr_layer::Layer,
-        }
+        shell::wlr_layer::Layer,
     },
 };
 
@@ -286,16 +284,17 @@ where
             if let Some(wl_surface) = toplevel_surface.get_surface() {
                 if menu_index == menu_selected {
                     frame
-                    .render_texture_from_to(
-                        menu_selected_texture,
-                        Rectangle::from_loc_and_size((0,0),(100,100)),
-                        Rectangle::from_loc_and_size(
-                            (0f64, menu_pos as f64),(output_rect.size.w as f64 , 100f64)
-                        ),
-                        Transform::Normal,
-                        1.0,
-                    ).unwrap();
-
+                        .render_texture_from_to(
+                            menu_selected_texture,
+                            Rectangle::from_loc_and_size((0, 0), (100, 100)),
+                            Rectangle::from_loc_and_size(
+                                (0f64, menu_pos as f64),
+                                (output_rect.size.w as f64, 100f64),
+                            ),
+                            Transform::Normal,
+                            1.0,
+                        )
+                        .unwrap();
                 }
                 // this surface is a root of a subsurface tree that needs to be drawn
                 if let Err(err) = draw_surface_tree(
@@ -315,39 +314,39 @@ where
                     .geometry(toplevel_surface)
                     .map(|g| g.loc)
                     .unwrap_or_default();
-                
-                    window_map.with_child_popups(wl_surface, |popup| {
-                        let location = popup.location();
-                        let draw_location = initial_place + location + toplevel_geometry_offset;
-                        if let Some(wl_surface) = popup.get_surface() {
-                            if let Err(err) = draw_surface_tree(
-                                renderer,
-                                frame,
-                                wl_surface,
-                                draw_location,
-                                output_scale,
-                                log,
-                                Some(output_rect_menu),
-                                Some(bounding_box),
-                            ) {
-                                result = Err(err);
-                            }
+
+                window_map.with_child_popups(wl_surface, |popup| {
+                    let location = popup.location();
+                    let draw_location = initial_place + location + toplevel_geometry_offset;
+                    if let Some(wl_surface) = popup.get_surface() {
+                        if let Err(err) = draw_surface_tree(
+                            renderer,
+                            frame,
+                            wl_surface,
+                            draw_location,
+                            output_scale,
+                            log,
+                            Some(output_rect_menu),
+                            Some(bounding_box),
+                        ) {
+                            result = Err(err);
                         }
-                    });
-                let window_title = toplevel_surface.title().unwrap_or("Untitled Window".to_string());
+                    }
+                });
+                let window_title = toplevel_surface
+                    .title()
+                    .unwrap_or("Untitled Window".to_string());
                 if let Err(_err) = draw_string(
                     renderer,
                     frame,
                     font_texture,
                     0.5f64,
-                    (220f64,menu_pos as f64 + 42f64).into(),
+                    (220f64, menu_pos as f64 + 42f64).into(),
                     window_title,
-                ){
+                ) {
                     return ();
-                }else{
-
+                } else {
                 }
-                
                 menu_pos += 100i32;
                 menu_index += 1;
             }
@@ -489,7 +488,6 @@ where
                 });
             }
         });
-
     result
 }
 
@@ -523,7 +521,6 @@ pub static FPS_NUMBERS_PNG: &[u8] = include_bytes!("../resources/numbers.png");
 pub static FONT_PNG: &[u8] = include_bytes!("../resources/font.png");
 
 pub static MENU_SELECTED_PNG: &[u8] = include_bytes!("../resources/menu_selected.png");
-
 
 #[cfg(feature = "debug")]
 pub fn draw_fps<R, E, F, T>(
@@ -588,15 +585,9 @@ where
 {
     let mut offset_x = 0f64;
     for letter in value.bytes() {
-        let y = (letter-2) / 26u8;
-        let x = (letter-2) % 26u8;
-        let rect = Rectangle::from_loc_and_size(
-            (x as i32 * 38 + 9, 
-            y as i32 * 38) ,
-            (20i32,
-            38i32)
-        );
-        
+        let y = (letter - 2) / 26u8;
+        let x = (letter - 2) % 26u8;
+        let rect = Rectangle::from_loc_and_size((x as i32 * 38 + 9, y as i32 * 38), (20i32, 38i32));
         frame
             .render_texture_from_to(
                 texture,

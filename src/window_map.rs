@@ -8,12 +8,17 @@ use smithay::{
     },
     utils::{Logical, Point, Rectangle},
     wayland::{
-        compositor::{with_states, with_surface_tree_downward, SubsurfaceCachedState, TraversalAction},
+        compositor::{
+            with_states, with_surface_tree_downward, SubsurfaceCachedState, TraversalAction,
+        },
         shell::{
             legacy::ShellSurface,
-            wlr_layer::Layer,
-            xdg::{PopupSurface, SurfaceCachedState, ToplevelSurface, XdgPopupSurfaceRoleAttributes, XdgToplevelSurfaceRoleAttributes,},
             legacy::ShellSurfaceAttributes,
+            wlr_layer::Layer,
+            xdg::{
+                PopupSurface, SurfaceCachedState, ToplevelSurface, XdgPopupSurfaceRoleAttributes,
+                XdgToplevelSurfaceRoleAttributes,
+            },
         },
     },
 };
@@ -70,44 +75,35 @@ impl Kind {
 
     pub fn title(&self) -> Option<String> {
         if let Some(wl_surface) = self.get_surface() {
-
-        with_states(wl_surface, 
-            |states| {
-                let sra = states.data_map.get::<Mutex<XdgToplevelSurfaceRoleAttributes>>();
+            with_states(wl_surface, |states| {
+                let sra = states
+                    .data_map
+                    .get::<Mutex<XdgToplevelSurfaceRoleAttributes>>();
                 if let Some(sra) = sra {
-                    let t1= sra
-                        .lock()
-                        .unwrap()
-                        .title.clone().unwrap();
-                    if t1.len()>0{
+                    let t1 = sra.lock().unwrap().title.clone().unwrap();
+                    if t1.len() > 0 {
                         return Some(t1);
                     }
                 }
                 let ssa = states.data_map.get::<Mutex<ShellSurfaceAttributes>>();
-                if let Some(ssa)= ssa{
-                    let t1 = ssa
-                        .lock()
-                        .unwrap()
-                        .title.clone();
-                    if t1.len() > 0{
+                if let Some(ssa) = ssa {
+                    let t1 = ssa.lock().unwrap().title.clone();
+                    if t1.len() > 0 {
                         return Some(t1);
                     }
                 }
                 let tc = states.data_map.get::<Mutex<TitleContainer>>();
-                if let Some(tc)= tc{
-                    let t1 = tc
-                        .lock()
-                        .unwrap()
-                        .title.clone();
-                    if t1.len() > 0{
+                if let Some(tc) = tc {
+                    let t1 = tc.lock().unwrap().title.clone();
+                    if t1.len() > 0 {
                         return Some(t1);
                     }
                 }
                 return Some("Untitled Window".to_string());
-            }
-        ).unwrap()
-        }else{
-        None
+            })
+            .unwrap()
+        } else {
+            None
         }
     }
 }
@@ -177,8 +173,6 @@ pub struct X11Id {
     pub window: u32,
 }
 
-
-
 #[derive(Debug)]
 struct Window {
     location: Point<i32, Logical>,
@@ -193,7 +187,10 @@ struct Window {
 impl Window {
     /// Finds the topmost surface under this point if any and returns it together with the location of this
     /// surface.
-    fn matching(&self, point: Point<f64, Logical>) -> Option<(wl_surface::WlSurface, Point<i32, Logical>)> {
+    fn matching(
+        &self,
+        point: Point<f64, Logical>,
+    ) -> Option<(wl_surface::WlSurface, Point<i32, Logical>)> {
         if !self.bbox.to_f64().contains(point) {
             return None;
         }
@@ -214,8 +211,10 @@ impl Window {
 
                     let contains_the_point = data
                         .map(|data| {
-                            data.borrow()
-                                .contains_point(&*states.cached_state.current(), point - location.to_f64())
+                            data.borrow().contains_point(
+                                &*states.cached_state.current(),
+                                point - location.to_f64(),
+                            )
                         })
                         .unwrap_or(false);
                     if contains_the_point {
@@ -294,7 +293,6 @@ impl Window {
             );
         }
     }
-
 }
 
 #[derive(Debug)]
@@ -311,7 +309,7 @@ pub struct WindowMap {
 }
 
 impl WindowMap {
-    pub fn len(&mut self)->i32{
+    pub fn len(&mut self) -> i32 {
         self.windows.len() as i32
     }
 
@@ -433,7 +431,6 @@ impl WindowMap {
             return;
         }
     }
-    
     pub fn with_child_popups<Func>(&self, base: &wl_surface::WlSurface, mut f: Func)
     where
         Func: FnMut(&PopupKind),
@@ -499,30 +496,24 @@ impl WindowMap {
     }
 
     /// Finds the X11 Window corresponding to the given `Window`.
-    pub fn find_x11_window(&self, window: u32) -> Option<Kind>
-    {
-        for w in self.windows.iter(){
+    pub fn find_x11_window(&self, window: u32) -> Option<Kind> {
+        for w in self.windows.iter() {
             if let Some(wl_surface) = w.toplevel.get_surface() {
-
-                if let Ok(return_window) = with_states(wl_surface, 
-                    |states| {
-                        let id = states.data_map.get::<X11Id>();
-                        if let Some(id)=id{
-                            if id.window == window{
-                                Some(w.toplevel.clone())
-                                
-                            } else {
-                                None
-                            }
+                if let Ok(return_window) = with_states(wl_surface, |states| {
+                    let id = states.data_map.get::<X11Id>();
+                    if let Some(id) = id {
+                        if id.window == window {
+                            Some(w.toplevel.clone())
                         } else {
                             None
                         }
+                    } else {
+                        None
                     }
-                ){
+                }) {
                     return return_window;
                 }
             } else {
-                
             }
         }
         None

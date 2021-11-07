@@ -14,7 +14,9 @@ use smithay::{
     },
     utils::{Logical, Point},
     wayland::{
-        data_device::{default_action_chooser, init_data_device, set_data_device_focus, DataDeviceEvent},
+        data_device::{
+            default_action_chooser, init_data_device, set_data_device_focus, DataDeviceEvent,
+        },
         output::xdg::init_xdg_output_manager,
         seat::{CursorImageStatus, KeyboardHandle, PointerHandle, Seat, XkbConfig},
         shm::init_shm_global,
@@ -110,7 +112,10 @@ impl<BackendData: Backend + 'static> ConsolationState<BackendData> {
                     } => {
                         if token_data.timestamp.elapsed().as_secs() < 10 {
                             // Just grant the wish
-                            consolation_state.window_map.borrow_mut().bring_surface_to_top(&surface);
+                            consolation_state
+                                .window_map
+                                .borrow_mut()
+                                .bring_surface_to_top(&surface);
                         } else {
                             // Discard the request
                             state.lock().unwrap().remove_request(&token);
@@ -172,10 +177,11 @@ impl<BackendData: Backend + 'static> ConsolationState<BackendData> {
         init_tablet_manager_global(&mut display.borrow_mut());
 
         let cursor_status3 = cursor_status.clone();
-        seat.tablet_seat().on_cursor_surface(move |_tool, new_status| {
-            // TODO: tablet tools should have their own cursors
-            *cursor_status3.lock().unwrap() = new_status;
-        });
+        seat.tablet_seat()
+            .on_cursor_surface(move |_tool, new_status| {
+                // TODO: tablet tools should have their own cursors
+                *cursor_status3.lock().unwrap() = new_status;
+            });
 
         let keyboard = seat
             .add_keyboard(XkbConfig::default(), 200, 25, |seat, focus| {
@@ -187,7 +193,9 @@ impl<BackendData: Backend + 'static> ConsolationState<BackendData> {
         let xwayland = {
             let (xwayland, channel) = XWayland::new(handle.clone(), display.clone(), log.clone());
             let ret = handle.insert_source(channel, |event, _, consolation_state| match event {
-                XWaylandEvent::Ready { connection, client } => consolation_state.xwayland_ready(connection, client),
+                XWaylandEvent::Ready { connection, client } => {
+                    consolation_state.xwayland_ready(connection, client)
+                }
                 XWaylandEvent::Exited => consolation_state.xwayland_exited(),
             });
             if let Err(e) = ret {
@@ -198,7 +206,6 @@ impl<BackendData: Backend + 'static> ConsolationState<BackendData> {
             }
             xwayland
         };
-
         ConsolationState {
             backend_data,
             running: Arc::new(AtomicBool::new(true)),

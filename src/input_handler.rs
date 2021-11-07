@@ -87,7 +87,9 @@ impl<Backend> ConsolationState<Backend> {
     }
 
     fn on_pointer_button<B: InputBackend>(&mut self, evt: B::PointerButtonEvent) {
-        if self.menu_open { return ;}
+        if self.menu_open {
+            return;
+        }
         let serial = SCOUNTER.next_serial();
         let button = match evt.button() {
             input::MouseButton::Left => 0x110,
@@ -114,7 +116,9 @@ impl<Backend> ConsolationState<Backend> {
     }
 
     fn on_pointer_axis<B: InputBackend>(&mut self, evt: B::PointerAxisEvent) {
-        if self.menu_open{ return; }
+        if self.menu_open {
+            return;
+        }
         let source = match evt.source() {
             input::AxisSource::Continuous => wl_pointer::AxisSource::Continuous,
             input::AxisSource::Finger => wl_pointer::AxisSource::Finger,
@@ -208,44 +212,39 @@ impl ConsolationState<WinitData> {
                 KeyAction::Menu => {
                     self.menu_open = !self.menu_open;
                     info!(self.log, "MENU KEY {}", self.menu_open);
-                    if self.menu_open{
+                    if self.menu_open {
                         self.menu_index = 0;
-                    }else{
+                    } else {
                         self.menu_index = -1;
                     }
                 }
-                KeyAction::DirectionUp =>{
-                    if self.menu_open{
-                        if self.menu_index>0{
+                KeyAction::DirectionUp => {
+                    if self.menu_open {
+                        if self.menu_index > 0 {
                             self.menu_index = self.menu_index - 1;
                         }
                     }
                 }
-                KeyAction::DirectionLeft =>{
-                    
-                }
-                KeyAction::DirectionDown =>{
-                    if self.menu_open{
+                KeyAction::DirectionLeft => {}
+                KeyAction::DirectionDown => {
+                    if self.menu_open {
                         self.menu_index = self.menu_index + 1;
-                        if self.menu_index>= self.window_map.borrow_mut().len() {
-                            self.menu_index = self.window_map.borrow_mut().len()-1;
+                        if self.menu_index >= self.window_map.borrow_mut().len() {
+                            self.menu_index = self.window_map.borrow_mut().len() - 1;
                         }
                     }
                 }
-                KeyAction::DirectionRight =>{
-                    
-                }
-                KeyAction::NavigateForward =>{
-                    if self.menu_open{
-                        self.window_map.borrow_mut().bring_nth_window_to_top(self.menu_index as usize);
-                        self.menu_open=false;
-                        self.menu_index=-1;
+                KeyAction::DirectionRight => {}
+                KeyAction::NavigateForward => {
+                    if self.menu_open {
+                        self.window_map
+                            .borrow_mut()
+                            .bring_nth_window_to_top(self.menu_index as usize);
+                        self.menu_open = false;
+                        self.menu_index = -1;
                     }
-                    
                 }
-                KeyAction::NavigateBack =>{
-                    
-                }
+                KeyAction::NavigateBack => {}
                 action => {
                     warn!(
                         self.log,
@@ -279,7 +278,9 @@ impl ConsolationState<WinitData> {
     }
 
     fn on_pointer_move_absolute<B: InputBackend>(&mut self, evt: B::PointerMotionAbsoluteEvent) {
-        if self.menu_open { return; }
+        if self.menu_open {
+            return;
+        }
         let output_size = self
             .output_map
             .borrow()
@@ -417,44 +418,39 @@ impl ConsolationState<UdevData> {
                 KeyAction::Menu => {
                     info!(self.log, "MENU KEY");
                     self.menu_open = !self.menu_open;
-                    if self.menu_open{
+                    if self.menu_open {
                         self.menu_index = 0;
-                    }else{
+                    } else {
                         self.menu_index = -1;
                     }
                 }
-                KeyAction::DirectionUp =>{
-                    if self.menu_open{
-                        if self.menu_index>0{
+                KeyAction::DirectionUp => {
+                    if self.menu_open {
+                        if self.menu_index > 0 {
                             self.menu_index = self.menu_index - 1;
                         }
                     }
                 }
-                KeyAction::DirectionLeft =>{
-                    
-                }
-                KeyAction::DirectionDown =>{
-                    if self.menu_open{
+                KeyAction::DirectionLeft => {}
+                KeyAction::DirectionDown => {
+                    if self.menu_open {
                         self.menu_index = self.menu_index + 1;
-                        if self.menu_index>= self.window_map.borrow_mut().len() {
-                            self.menu_index = self.window_map.borrow_mut().len()-1;
+                        if self.menu_index >= self.window_map.borrow_mut().len() {
+                            self.menu_index = self.window_map.borrow_mut().len() - 1;
                         }
                     }
                 }
-                KeyAction::DirectionRight =>{
-                    
-                }
-                KeyAction::NavigateForward =>{
-                    if self.menu_open{
-                        self.window_map.borrow_mut().bring_nth_window_to_top(self.menu_index as usize);
-                        self.menu_open=false;
-                        self.menu_index=-1;
+                KeyAction::DirectionRight => {}
+                KeyAction::NavigateForward => {
+                    if self.menu_open {
+                        self.window_map
+                            .borrow_mut()
+                            .bring_nth_window_to_top(self.menu_index as usize);
+                        self.menu_open = false;
+                        self.menu_index = -1;
                     }
-                    
                 }
-                KeyAction::NavigateBack =>{
-                    
-                }
+                KeyAction::NavigateBack => {}
             },
             InputEvent::PointerMotion { event, .. } => self.on_pointer_move::<B>(event),
             InputEvent::PointerButton { event, .. } => self.on_pointer_button::<B>(event),
@@ -491,7 +487,9 @@ impl ConsolationState<UdevData> {
     }
 
     fn on_pointer_move<B: InputBackend>(&mut self, evt: B::PointerMotionEvent) {
-        if self.menu_open {return;}
+        if self.menu_open {
+            return;
+        }
         let serial = SCOUNTER.next_serial();
         self.pointer_location += evt.delta();
 
@@ -508,7 +506,9 @@ impl ConsolationState<UdevData> {
     }
 
     fn on_tablet_tool_axis<B: InputBackend>(&mut self, evt: B::TabletToolAxisEvent) {
-        if self.menu_open { return; }
+        if self.menu_open {
+            return;
+        }
         let output_map = self.output_map.borrow();
         let pointer_location = &mut self.pointer_location;
         let tablet_seat = self.seat.tablet_seat();
@@ -555,7 +555,9 @@ impl ConsolationState<UdevData> {
     }
 
     fn on_tablet_tool_proximity<B: InputBackend>(&mut self, evt: B::TabletToolProximityEvent) {
-        if self.menu_open { return; }
+        if self.menu_open {
+            return;
+        }
         let output_map = self.output_map.borrow();
         let pointer_location = &mut self.pointer_location;
         let tablet_seat = self.seat.tablet_seat();
@@ -589,7 +591,9 @@ impl ConsolationState<UdevData> {
     }
 
     fn on_tablet_tool_tip<B: InputBackend>(&mut self, evt: B::TabletToolTipEvent) {
-        if self.menu_open { return; }
+        if self.menu_open {
+            return;
+        }
         let tool = self.seat.tablet_seat().get_tool(&evt.tool());
 
         if let Some(tool) = tool {
@@ -617,7 +621,9 @@ impl ConsolationState<UdevData> {
     }
 
     fn on_tablet_button<B: InputBackend>(&mut self, evt: B::TabletToolButtonEvent) {
-        if self.menu_open { return; }
+        if self.menu_open {
+            return;
+        }
         let tool = self.seat.tablet_seat().get_tool(&evt.tool());
 
         if let Some(tool) = tool {
@@ -725,44 +731,39 @@ impl ConsolationState<X11Data> {
                 KeyAction::Menu => {
                     info!(self.log, "MENU KEY");
                     self.menu_open = !self.menu_open;
-                    if self.menu_open{
+                    if self.menu_open {
                         self.menu_index = 0;
-                    }else{
+                    } else {
                         self.menu_index = -1;
                     }
                 }
-                KeyAction::DirectionUp =>{
-                    if self.menu_open{
-                        if self.menu_index>0{
+                KeyAction::DirectionUp => {
+                    if self.menu_open {
+                        if self.menu_index > 0 {
                             self.menu_index = self.menu_index - 1;
                         }
                     }
                 }
-                KeyAction::DirectionLeft =>{
-                    
-                }
-                KeyAction::DirectionDown =>{
-                    if self.menu_open{
+                KeyAction::DirectionLeft => {}
+                KeyAction::DirectionDown => {
+                    if self.menu_open {
                         self.menu_index = self.menu_index + 1;
-                        if self.menu_index>= self.window_map.borrow_mut().len() {
-                            self.menu_index = self.window_map.borrow_mut().len()-1;
+                        if self.menu_index >= self.window_map.borrow_mut().len() {
+                            self.menu_index = self.window_map.borrow_mut().len() - 1;
                         }
                     }
                 }
-                KeyAction::DirectionRight =>{
-                    
-                }
-                KeyAction::NavigateForward =>{
-                    if self.menu_open{
-                        self.window_map.borrow_mut().bring_nth_window_to_top(self.menu_index as usize);
-                        self.menu_open=false;
-                        self.menu_index=-1;
+                KeyAction::DirectionRight => {}
+                KeyAction::NavigateForward => {
+                    if self.menu_open {
+                        self.window_map
+                            .borrow_mut()
+                            .bring_nth_window_to_top(self.menu_index as usize);
+                        self.menu_open = false;
+                        self.menu_index = -1;
                     }
-                    
                 }
-                KeyAction::NavigateBack =>{
-                    
-                }
+                KeyAction::NavigateBack => {}
 
                 action => {
                     warn!(
@@ -782,7 +783,9 @@ impl ConsolationState<X11Data> {
     }
 
     fn on_pointer_move_absolute<B: InputBackend>(&mut self, evt: B::PointerMotionAbsoluteEvent) {
-        if self.menu_open{ return; }
+        if self.menu_open {
+            return;
+        }
         let output_size = self
             .output_map
             .borrow()
@@ -853,39 +856,39 @@ fn process_keyboard_shortcut(
     {
         // ctrl+alt+backspace = quit
         // logo + q = quit
-        return Some(KeyAction::Quit)
+        return Some(KeyAction::Quit);
     } else if (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12).contains(&keysym) {
         // VTSwicth
         return Some(KeyAction::VtSwitch(
             (keysym - xkb::KEY_XF86Switch_VT_1 + 1) as i32,
-        ))
+        ));
     } else if modifiers.logo && keysym == xkb::KEY_Return {
         // run terminal
-        return Some(KeyAction::Run("alacritty".into()))
+        return Some(KeyAction::Run("alacritty".into()));
     } else if modifiers.logo && keysym >= xkb::KEY_1 && keysym <= xkb::KEY_9 {
-        return Some(KeyAction::Screen((keysym - xkb::KEY_1) as usize))
+        return Some(KeyAction::Screen((keysym - xkb::KEY_1) as usize));
     } else if modifiers.logo && modifiers.shift && keysym == xkb::KEY_M {
-        return Some(KeyAction::ScaleDown)
+        return Some(KeyAction::ScaleDown);
     } else if modifiers.logo && modifiers.shift && keysym == xkb::KEY_P {
-        return Some(KeyAction::ScaleUp)
-    } else if keysym == xkb::KEY_Menu {
-        return Some(KeyAction::Menu)
+        return Some(KeyAction::ScaleUp);
+    } else if keysym == xkb::KEY_Menu || keysym == xkb::KEY_Alt_R {
+        return Some(KeyAction::Menu);
     }
     if open_menu {
         if keysym == xkb::KEY_Up {
-            return Some(KeyAction::DirectionUp)
+            return Some(KeyAction::DirectionUp);
         } else if keysym == xkb::KEY_Left {
-            return Some(KeyAction::DirectionLeft)
+            return Some(KeyAction::DirectionLeft);
         } else if keysym == xkb::KEY_Right {
-            return Some(KeyAction::DirectionRight)
+            return Some(KeyAction::DirectionRight);
         } else if keysym == xkb::KEY_Down {
-            return Some(KeyAction::DirectionDown)
+            return Some(KeyAction::DirectionDown);
         } else if keysym == xkb::KEY_Return {
-            return Some(KeyAction::NavigateForward)
+            return Some(KeyAction::NavigateForward);
         } else if keysym == xkb::KEY_BackSpace {
-            return Some(KeyAction::NavigateBack)
+            return Some(KeyAction::NavigateBack);
         }
     }
 
-    return None
+    return None;
 }

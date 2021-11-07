@@ -1,4 +1,3 @@
-use std::{cell::RefCell, rc::Rc, sync::atomic::Ordering, time::Duration};
 #[cfg(feature = "egl")]
 use smithay::{
     backend::renderer::{ImportDma, ImportEgl},
@@ -11,16 +10,20 @@ use smithay::{
         wayland_server::{protocol::wl_output, Display},
     },
     wayland::{
-        SERIAL_COUNTER as SCOUNTER,
         output::{Mode, PhysicalProperties},
         seat::CursorImageStatus,
+        SERIAL_COUNTER as SCOUNTER,
     },
 };
+use std::{cell::RefCell, rc::Rc, sync::atomic::Ordering, time::Duration};
 
 use slog::Logger;
 
 use crate::state::{Backend, ConsolationState};
-use crate::{drawing::*, render::render_layers_and_windows, render::top_window_get_bbox, render::render_background, render::render_window_select};
+use crate::{
+    drawing::*, render::render_background, render::render_layers_and_windows,
+    render::render_window_select, render::top_window_get_bbox,
+};
 
 pub const OUTPUT_NAME: &str = "winit";
 
@@ -133,16 +136,12 @@ pub fn run_winit(log: Logger) {
 
     let font_texture = import_bitmap(
         &mut renderer.borrow_mut().renderer(),
-        &image::io::Reader::with_format(
-            std::io::Cursor::new(FONT_PNG),
-            image::ImageFormat::Png,
-        )
-        .decode()
-        .unwrap()
-        .to_rgba8(),
+        &image::io::Reader::with_format(std::io::Cursor::new(FONT_PNG), image::ImageFormat::Png)
+            .decode()
+            .unwrap()
+            .to_rgba8(),
     )
     .expect("Unable to upload font texture");
-
 
     let menu_select_texture = import_bitmap(
         &mut renderer.borrow_mut().renderer(),
@@ -298,9 +297,10 @@ pub fn run_winit(log: Logger) {
             state.output_map.borrow_mut().refresh();
             let focused_window = state.window_map.borrow_mut().windows().next();
             if focused_window.is_some() {
-                state.keyboard.set_focus(focused_window.unwrap().get_surface(),serial);
-            }else{
-
+                state
+                    .keyboard
+                    .set_focus(focused_window.unwrap().get_surface(), serial);
+            } else {
             }
         }
 

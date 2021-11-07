@@ -3,7 +3,7 @@ use smithay::{
     backend::{
         renderer::{
             gles2::{Gles2Frame, Gles2Renderer, Gles2Texture},
-            Frame, 
+            Frame,
         },
         SwapBuffersError,
     },
@@ -16,20 +16,15 @@ use crate::{
     window_map::WindowMap,
 };
 
-pub fn top_window_get_bbox(
-    window_map: &WindowMap,
-) -> Option<Rectangle<i32, Logical>> {
-    let mut bounding_box_return=Some(Rectangle::from_loc_and_size((0,0),(1,1)));
+pub fn top_window_get_bbox(window_map: &WindowMap) -> Option<Rectangle<i32, Logical>> {
+    let mut bounding_box_return = Some(Rectangle::from_loc_and_size((0, 0), (1, 1)));
     window_map.with_window_top(|_toplevel_surface, mut _initial_place, &bounding_box| {
         bounding_box_return = Some(bounding_box);
     });
     return bounding_box_return;
 }
 
-pub fn render_background(
-    _enderer: &mut Gles2Renderer,
-    frame: &mut Gles2Frame,
-){
+pub fn render_background(_enderer: &mut Gles2Renderer, frame: &mut Gles2Frame) {
     let _ = frame.clear([0.0, 0.0, 0.2, 1.0]);
 }
 
@@ -43,9 +38,18 @@ pub fn render_window_select(
     menu_selected: i32,
     font_texture: &Gles2Texture,
     menu_selected_texture: &Gles2Texture,
-) -> Result<(), SwapBuffersError>{
-
-    draw_windows_menu(renderer, frame, window_map, output_geometry, 1f32, logger, menu_selected, font_texture, menu_selected_texture)?;
+) -> Result<(), SwapBuffersError> {
+    draw_windows_menu(
+        renderer,
+        frame,
+        window_map,
+        output_geometry,
+        1f32,
+        logger,
+        menu_selected,
+        font_texture,
+        menu_selected_texture,
+    )?;
     Ok(())
 }
 
@@ -57,7 +61,6 @@ pub fn render_layers_and_windows(
     output_scale: f32,
     logger: &Logger,
 ) -> Result<(), SwapBuffersError> {
-
     for layer in [Layer::Background, Layer::Bottom] {
         draw_layers(
             renderer,
@@ -70,7 +73,14 @@ pub fn render_layers_and_windows(
         )?;
     }
 
-    draw_windows(renderer, frame, window_map, output_geometry, output_scale, logger)?;
+    draw_windows(
+        renderer,
+        frame,
+        window_map,
+        output_geometry,
+        output_scale,
+        logger,
+    )?;
 
     for layer in [Layer::Top, Layer::Overlay] {
         draw_layers(

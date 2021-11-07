@@ -186,7 +186,10 @@ impl OutputMap {
 
         // Check if any windows are now out of outputs range
         // and move them to the primary output
-        let primary_output_location = self.with_primary().map(|o| o.location()).unwrap_or_default();
+        let primary_output_location = self
+            .with_primary()
+            .map(|o| o.location())
+            .unwrap_or_default();
         let mut window_map = self.window_map.borrow_mut();
 
         // TODO: This is a bit unfortunate, we save the windows in a temp vector
@@ -210,7 +213,8 @@ impl OutputMap {
                     if state.states.contains(xdg_toplevel::State::Maximized)
                         || state.states.contains(xdg_toplevel::State::Fullscreen)
                     {
-                        let output_geometry = if let Some(output) = state.fullscreen_output.as_ref() {
+                        let output_geometry = if let Some(output) = state.fullscreen_output.as_ref()
+                        {
                             self.find_by_output(output).map(|o| o.geometry())
                         } else {
                             self.find_by_position(location).map(|o| o.geometry())
@@ -282,7 +286,9 @@ impl OutputMap {
     pub fn width(&self) -> i32 {
         // This is a simplification, we only arrange the outputs on the y axis side-by-side
         // so that the total width is simply the sum of all output widths.
-        self.outputs.iter().fold(0, |acc, output| acc + output.size().w)
+        self.outputs
+            .iter()
+            .fold(0, |acc, output| acc + output.size().w)
     }
 
     pub fn height(&self, x: i32) -> Option<i32> {
@@ -348,9 +354,12 @@ impl OutputMap {
         if let Some(output) = output {
             if let Some(mode) = mode {
                 output.output.delete_mode(output.current_mode);
-                output
-                    .output
-                    .change_current_state(Some(mode), None, Some(output.output_scale), None);
+                output.output.change_current_state(
+                    Some(mode),
+                    None,
+                    Some(output.output_scale),
+                    None,
+                );
                 output.output.set_preferred(mode);
                 output.current_mode = mode;
             }
@@ -379,7 +388,8 @@ impl OutputMap {
                                     toplevel_output_location.y *= rescale as f64;
                                     window_map.set_location(
                                         &toplevel,
-                                        output_geometry.loc + toplevel_output_location.to_i32_round(),
+                                        output_geometry.loc
+                                            + toplevel_output_location.to_i32_round(),
                                     );
                                 }
                             }
@@ -405,7 +415,12 @@ impl OutputMap {
         self.arrange();
     }
 
-    pub fn update_by_name<N: AsRef<str>>(&mut self, mode: Option<Mode>, scale: Option<f32>, name: N) {
+    pub fn update_by_name<N: AsRef<str>>(
+        &mut self,
+        mode: Option<Mode>,
+        scale: Option<f32>,
+        name: N,
+    ) {
         self.update(mode, scale, |o| o.name() == name.as_ref())
     }
 
@@ -421,7 +436,9 @@ impl OutputMap {
         // Clean-up dead surfaces
         self.outputs.iter_mut().for_each(|o| {
             o.surfaces.retain(|s| s.as_ref().is_alive());
-            o.layer_surfaces.borrow_mut().retain(|s| s.as_ref().is_alive());
+            o.layer_surfaces
+                .borrow_mut()
+                .retain(|s| s.as_ref().is_alive());
         });
 
         let window_map = self.window_map.clone();
@@ -461,7 +478,8 @@ impl OutputMap {
 
                                 if data.is_some() {
                                     if states.role == Some("subsurface") {
-                                        let current = states.cached_state.current::<SubsurfaceCachedState>();
+                                        let current =
+                                            states.cached_state.current::<SubsurfaceCachedState>();
                                         location += current.location;
                                     }
 

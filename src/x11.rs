@@ -15,21 +15,20 @@ use smithay::{
         wayland_server::{protocol::wl_output, Display},
     },
     wayland::{
-        SERIAL_COUNTER as SCOUNTER,
         output::{Mode, PhysicalProperties},
         seat::CursorImageStatus,
+        SERIAL_COUNTER as SCOUNTER,
     },
 };
 
 use crate::{
     drawing::*,
-    render::render_layers_and_windows,render::top_window_get_bbox,
-    render::render_background,
+    render::{
+        render_background, render_layers_and_windows, render_window_select, top_window_get_bbox,
+    },
     state::Backend,
     ConsolationState,
 };
-
-use smithay::backend::renderer::gles2::Gles2Texture;
 
 pub const OUTPUT_NAME: &str = "x11";
 
@@ -42,7 +41,6 @@ pub struct X11Data {
     fps_texture: Gles2Texture,
     #[cfg(feature = "debug")]
     fps: fps_ticker::Fps,
-    selected_texture: Gles2Texture,
 }
 
 impl Backend for X11Data {
@@ -55,8 +53,8 @@ pub fn run_x11(log: Logger) {
     let mut event_loop = EventLoop::try_new().unwrap();
     let display = Rc::new(RefCell::new(Display::new()));
 
-    let (backend, surface) =
-        X11Backend::with_title("Consolation", log.clone()).expect("Failed to initialize X11 backend");
+    let (backend, surface) = X11Backend::with_title("Consolation", log.clone())
+        .expect("Failed to initialize X11 backend");
     let window = backend.window();
 
     // Initialize EGL using the GBM device setup earlier.
@@ -68,7 +66,11 @@ pub fn run_x11(log: Logger) {
 
     #[cfg(feature = "egl")]
     {
-        if renderer.borrow_mut().bind_wl_display(&*display.borrow()).is_ok() {
+        if renderer
+            .borrow_mut()
+            .bind_wl_display(&*display.borrow())
+            .is_ok()
+        {
             info!(log, "EGL hardware-acceleration enabled");
             let dmabuf_formats = renderer
                 .borrow_mut()
@@ -118,22 +120,15 @@ pub fn run_x11(log: Logger) {
         },
         #[cfg(feature = "debug")]
         fps: fps_ticker::Fps::default(),
-
-        selected_texture: import_bitmap(
-            &mut renderer.borrow_mut(),
-            &image::io::Reader::with_format(
-                std::io::Cursor::new(MENU_SELECTED_PNG),
-                image::ImageFormat::Png,
-            )
-            .decode()
-            .unwrap()
-            .to_rgba8(),
-        )
-        .expect("Unable to upload menu texture"),
-
     };
 
-    let mut state = ConsolationState::init(display.clone(), event_loop.handle(), data, log.clone(), true);
+    let mut state = ConsolationState::init(
+        display.clone(),
+        event_loop.handle(),
+        data,
+        log.clone(),
+        true,
+    );
 
     state.output_map.borrow_mut().add(
         OUTPUT_NAME,
@@ -189,6 +184,27 @@ pub fn run_x11(log: Logger) {
     #[cfg(feature = "xwayland")]
     state.start_xwayland();
 
+    let font_texture = import_bitmap(
+        &mut renderer.borrow_mut(),
+        &image::io::Reader::with_format(std::io::Cursor::new(FONT_PNG), image::ImageFormat::Png)
+            .decode()
+            .unwrap()
+            .to_rgba8(),
+    )
+    .expect("Unable to upload font texture");
+
+    let menu_select_texture = import_bitmap(
+        &mut renderer.borrow_mut(),
+        &image::io::Reader::with_format(
+            std::io::Cursor::new(MENU_SELECTED_PNG),
+            image::ImageFormat::Png,
+        )
+        .decode()
+        .unwrap()
+        .to_rgba8(),
+    )
+    .expect("Unable to upload selected texture");
+
     info!(log, "Initialization completed, starting the main loop.");
 
     while state.running.load(Ordering::SeqCst) {
@@ -217,7 +233,10 @@ pub fn run_x11(log: Logger) {
                     #[cfg(feature = "debug")]
                     let fps_texture = &backend_data.fps_texture;
                     let menu_open = &state.menu_open;
+                    let menu_index = &state.menu_index;
 
+                    //let font_texture = &data.font_texture;
+                    //let menu_select_texture = &data.menu_select_texture;
                     if let Err(err) = renderer.bind(present.buffer()) {
                         error!(log, "Error while binding buffer: {}", err);
                     }
@@ -231,77 +250,92 @@ pub fn run_x11(log: Logger) {
                             Transform::Flipped180,
                             |renderer, frame| {
                                 render_background(renderer, frame);
-                                if *menu_open{
+                                if *menu_open {
+                                    render_window_select(
+                                        renderer,
+                                        frame,
+                                        &*window_map,
+                                        output_geometry,
+                                        output_scale,
+                                        &log,
+                                        *menu_index,
+                                        &font_texture,
+                                        &menu_select_texture,
+                                    )?;
+                                } else {
+                                    render_layers_and_windows(
+                                        renderer,
+                                        frame,
+                                        &*window_map,
+                                        output_geometry,
+                                        output_scale,
+                                        &log,
+                                    )?;
+                                    let bbox = top_window_get_bbox(&*window_map).unwrap();
 
-                                }else{
-                                render_layers_and_windows(
-                                    renderer,
-                                    frame,
-                                    &*window_map,
-                                    output_geometry,
-                                    output_scale,
-                                    &log,
-                                )?;
-                                let bbox = top_window_get_bbox(&*window_map).unwrap();
+                                    // draw the dnd icon if any
+                                    {
+                                        let guard = dnd_icon.lock().unwrap();
+                                        if let Some(ref surface) = *guard {
+                                            if surface.as_ref().is_alive() {
+                                                draw_dnd_icon(
+                                                    renderer,
+                                                    frame,
+                                                    surface,
+                                                    (x as i32, y as i32).into(),
+                                                    output_scale,
+                                                    &log,
+                                                )?;
+                                            }
+                                        }
+                                    }
 
-                                // draw the dnd icon if any
-                                {
-                                    let guard = dnd_icon.lock().unwrap();
-                                    if let Some(ref surface) = *guard {
-                                        if surface.as_ref().is_alive() {
-                                            draw_dnd_icon(
+                                    // draw the cursor as relevant
+                                    {
+                                        let mut guard = cursor_status.lock().unwrap();
+                                        // reset the cursor if the surface is no longer alive
+                                        let mut reset = false;
+
+                                        if let CursorImageStatus::Image(ref surface) = *guard {
+                                            reset = !surface.as_ref().is_alive();
+                                        }
+
+                                        if reset {
+                                            *guard = CursorImageStatus::Default;
+                                        }
+
+                                        // draw as relevant
+                                        if let CursorImageStatus::Image(ref surface) = *guard {
+                                            cursor_visible = false;
+                                            draw_cursor(
                                                 renderer,
                                                 frame,
                                                 surface,
                                                 (x as i32, y as i32).into(),
                                                 output_scale,
                                                 &log,
+                                                Some(output_geometry),
+                                                Some(bbox),
                                             )?;
+                                        } else {
+                                            cursor_visible = true;
                                         }
                                     }
-                                }
 
-                                // draw the cursor as relevant
-                                {
-                                    let mut guard = cursor_status.lock().unwrap();
-                                    // reset the cursor if the surface is no longer alive
-                                    let mut reset = false;
+                                    #[cfg(feature = "debug")]
+                                    {
+                                        use crate::drawing::draw_fps;
 
-                                    if let CursorImageStatus::Image(ref surface) = *guard {
-                                        reset = !surface.as_ref().is_alive();
-                                    }
-
-                                    if reset {
-                                        *guard = CursorImageStatus::Default;
-                                    }
-
-                                    // draw as relevant
-                                    if let CursorImageStatus::Image(ref surface) = *guard {
-                                        cursor_visible = false;
-                                        draw_cursor(
+                                        draw_fps(
                                             renderer,
                                             frame,
-                                            surface,
-                                            (x as i32, y as i32).into(),
-                                            output_scale,
-                                            &log,
-                                            Some(output_geometry),
-                                            Some(bbox),
+                                            fps_texture,
+                                            output_scale as f64,
+                                            fps,
                                         )?;
-                                    } else {
-                                        cursor_visible = true;
                                     }
                                 }
-
-                                #[cfg(feature = "debug")]
-                                {
-                                    use crate::drawing::draw_fps;
-
-                                    draw_fps(renderer, frame, fps_texture, output_scale as f64, fps)?;
-                                }
-                            }
                                 Ok(())
-                            
                             },
                         )
                         .map_err(Into::<SwapBuffersError>::into)
@@ -325,7 +359,10 @@ pub fn run_x11(log: Logger) {
                 }
 
                 Err(err) => {
-                    error!(log, "Failed to allocate buffers to present to window: {}", err);
+                    error!(
+                        log,
+                        "Failed to allocate buffers to present to window: {}", err
+                    );
                     state.running.store(false, Ordering::SeqCst);
                 }
             }
@@ -354,9 +391,10 @@ pub fn run_x11(log: Logger) {
             state.output_map.borrow_mut().refresh();
             let focused_window = state.window_map.borrow_mut().windows().next();
             if focused_window.is_some() {
-                state.keyboard.set_focus(focused_window.unwrap().get_surface(),serial);
-            }else{
-
+                state
+                    .keyboard
+                    .set_focus(focused_window.unwrap().get_surface(), serial);
+            } else {
             }
         }
     }
