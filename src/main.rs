@@ -1,4 +1,5 @@
 use slog::{crit, o, Drain};
+use std::env;
 
 static POSSIBLE_BACKENDS: &[&str] = &[
     #[cfg(feature = "winit")]
@@ -22,23 +23,35 @@ fn main() {
     };
     let _guard = slog_scope::set_global_logger(log.clone());
     slog_stdlog::init().expect("Could not setup log backend");
+    let mut use_winit = false;
+    let mut use_tty = false;
+
+    match env::var("XDG_SESSION_TYPE") {
+        Ok(val) => {
+            if val == "tty" {
+                use_tty = true;
+            } else if val == "wayland" {
+                use_winit = true;
+            } else if val == "x11" {
+                use_winit = true;
+            }
+        }
+        Err(_e) => slog::info!(log, "No XDG_SESSION_TYPE environment variable"),
+    }
 
     let arg = ::std::env::args().nth(1);
     match arg.as_ref().map(|s| &s[..]) {
         #[cfg(feature = "winit")]
         Some("--winit") => {
-            slog::info!(log, "Starting consolation with winit backend");
-            consolation::winit::run_winit(log);
+            slog::info!(log, "Opting for Winit");
+            use_tty = false;
         }
         #[cfg(feature = "udev")]
         Some("--tty-udev") => {
-            slog::info!(log, "Starting consolation on a tty using udev");
-            consolation::udev::run_udev(log);
+            slog::info!(log, "Opting for TTY/udev");
+            use_winit = false;
         }
-        Some(other) => {
-            crit!(log, "Unknown backend: {}", other);
-        }
-        None => {
+        _ => {
             println!("USAGE: consolation --backend");
             println!();
             println!("Possible backends are:");
@@ -46,5 +59,13 @@ fn main() {
                 println!("\t{}", b);
             }
         }
+    }
+    if use_winit {
+        consolation::winit::run_winit(log);
+        return;
+    }
+    if use_tty {
+        consolation::udev::run_udev(log);
+        return;
     }
 }
