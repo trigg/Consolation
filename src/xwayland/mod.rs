@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell, collections::HashMap, convert::TryFrom, os::unix::net::UnixStream, rc::Rc, sync::Arc,
+    cell::RefCell, collections::HashMap, convert::TryFrom, os::unix::net::UnixStream, rc::Rc, sync::Arc, sync::Mutex
 };
 
 use smithay::{
@@ -250,19 +250,29 @@ impl X11State {
 
     fn get_title(&mut self, window: Window)->Option<String>{
         if let Some(title) = self.get_string(window, self.atoms._NET_WM_NAME, self.atoms.UTF8_STRING){
-            return Some(title);
+            if title.len() > 0 {
+                return Some(title);
+            }
         }
         if let Some(title) = self.get_string(window, self.atoms._NET_WM_NAME, self.atoms.STRING){
-            return Some(title);
+            if title.len() > 0 {
+                return Some(title);
+            }
         }
         if let Some(title) = self.get_string(window, self.atoms.WM_NAME, self.atoms.UTF8_STRING){
-            return Some(title);
+            if title.len() > 0 {
+                return Some(title);
+            }
         }
         if let Some(title) = self.get_string(window, self.atoms.WM_NAME, self.atoms.STRING){
-            return Some(title);
+            if title.len() > 0 {
+                return Some(title);
+            }
         }
         if let Some(title) = self.get_string(window, self.atoms.XA_WM_NAME, self.atoms.STRING){
-            return Some(title);
+            if title.len() > 0 {
+                return Some(title);
+            }
         }
         None
     }
@@ -284,8 +294,8 @@ impl X11State {
         let title = self.get_title(window);
         with_states(surface, 
             |states| {
-                if let Some(title) = title { states.data_map.insert_if_missing(|| TitleContainer{title}); }
-                states.data_map.insert_if_missing(|| X11Id{window: window as u32});
+                if let Some(title) = title { states.data_map.insert_if_missing(|| Mutex::new(TitleContainer{title})); }
+                states.data_map.insert_if_missing(|| Mutex::new(X11Id{window: window as u32}));
             }
         ).unwrap();
 
