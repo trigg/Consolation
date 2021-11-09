@@ -62,11 +62,13 @@ x11rb::atom_manager! {
         WM_S0,
         WL_SURFACE_ID,
         _CONSOLATION_CLOSE_CONNECTION,
+        // Window title atoms
         XA_WM_NAME,
         WM_NAME,
-        STRING,
-        UTF8_STRING,
         _NET_WM_NAME,
+        // Types of string
+        UTF8_STRING,
+        STRING,
     }
 }
 
