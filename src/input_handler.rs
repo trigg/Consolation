@@ -2,9 +2,9 @@ use std::{process::Command, sync::atomic::Ordering};
 
 use crate::ConsolationState;
 
-use crate::render::top_window_get_bbox;
 #[cfg(feature = "udev")]
 use crate::udev::UdevData;
+use crate::window_map::WindowMap;
 #[cfg(feature = "winit")]
 use crate::winit::WinitData;
 
@@ -14,6 +14,7 @@ use smithay::{
         PointerButtonEvent,
     },
     reexports::wayland_server::protocol::wl_pointer,
+    utils::{Logical, Rectangle},
     wayland::{
         seat::{keysyms as xkb, AxisFrame, FilterResult, Keysym, ModifiersState},
         SERIAL_COUNTER as SCOUNTER,
@@ -32,7 +33,7 @@ use smithay::{
         },
         session::Session,
     },
-    utils::{Logical, Point},
+    utils::Point,
     wayland::tablet_manager::{TabletDescriptor, TabletSeatTrait},
 };
 
@@ -98,7 +99,6 @@ impl<Backend> ConsolationState<Backend> {
         let state = match evt.state() {
             input::ButtonState::Pressed => {
                 // We do not change focus on mouse input
-                
                 /*if !self.pointer.is_grabbed() {
                     let under = self
                         .window_map
@@ -172,11 +172,9 @@ impl ConsolationState<WinitData> {
                     info!(self.log, "Quitting.");
                     self.running.store(false, Ordering::SeqCst);
                 }
-                KeyAction::Run(cmd,args) => {
+                KeyAction::Run(cmd, args) => {
                     info!(self.log, "Starting program"; "cmd" => cmd.clone());
-                    if let Err(e) = Command::new(&cmd)
-                        .args(args)
-                        .spawn() {
+                    if let Err(e) = Command::new(&cmd).args(args).spawn() {
                         error!(self.log,
                             "Failed to start program";
                             "cmd" => cmd,
@@ -279,23 +277,36 @@ impl ConsolationState<WinitData> {
     }
 
     fn on_pointer_move_absolute<B: InputBackend>(&mut self, evt: B::PointerMotionAbsoluteEvent) {
-        if self.menu_open { 
-            return; 
+        if self.menu_open {
+            return;
         }
         /*let output_size = self
-            .output_map
-            .borrow()
-            .find_by_name(crate::winit::OUTPUT_NAME)
-            .map(|o| o.size())
-            .unwrap();*/
-        let bbox = top_window_get_bbox(&*self.window_map.borrow()).unwrap();
-        let pos = evt.position_transformed((bbox.size.w, bbox.size.h).into());
-        let pos = (pos.x + bbox.loc.x as f64 ,pos.y + bbox.loc.y as f64).into();
+        .output_map
+        .borrow()
+        .find_by_name(crate::winit::OUTPUT_NAME)
+        .map(|o| o.size())
+        .unwrap();*/
+        let bbox = top_window_get_bbox(&*self.window_map.borrow());
+        if let Some(bbox) = bbox {
+            let pos = evt.position_transformed((bbox.size.w, bbox.size.h).into());
+            let pos = (pos.x + bbox.loc.x as f64, pos.y + bbox.loc.y as f64).into();
 
-        self.pointer_location = self.clamp_coords(pos);
-        let serial = SCOUNTER.next_serial();
-        let under = self.window_map.borrow().get_surface_under(pos);
-        self.pointer.motion(pos, under, serial, evt.time());
+            self.pointer_location = self.clamp_coords(pos);
+            let serial = SCOUNTER.next_serial();
+            let under = self.window_map.borrow().get_surface_under(pos);
+            self.pointer.motion(pos, under, serial, evt.time());
+        } else {
+            let output_size = self
+                .output_map
+                .borrow()
+                .find_by_name(crate::winit::OUTPUT_NAME)
+                .map(|o| o.size())
+                .unwrap();
+            let pos = evt.position_transformed(output_size);
+            let serial = SCOUNTER.next_serial();
+            let under = self.window_map.borrow().get_surface_under(pos);
+            self.pointer.motion(pos, under, serial, evt.time());
+        }
     }
 
     fn clamp_coords(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
@@ -303,19 +314,36 @@ impl ConsolationState<WinitData> {
             return pos;
         }
         let (mut pos_x, mut pos_y) = pos.into();
-        let bbox = top_window_get_bbox(&*self.window_map.borrow()).unwrap();
-        if pos_x < bbox.loc.x as f64 {
-            pos_x = bbox.loc.x as f64
-        } else if pos_x > bbox.loc.x as f64 + bbox.size.w as f64 {
-            pos_x = bbox.loc.x as f64 + bbox.size.w as f64;
-        }
+        let bbox = top_window_get_bbox(&*self.window_map.borrow());
+        if let Some(bbox) = bbox {
+            if pos_x < bbox.loc.x as f64 {
+                pos_x = bbox.loc.x as f64
+            } else if pos_x > bbox.loc.x as f64 + bbox.size.w as f64 {
+                pos_x = bbox.loc.x as f64 + bbox.size.w as f64;
+            }
 
-        if pos_y < bbox.loc.y as f64 {
-            pos_y = bbox.loc.y as f64
-        } else if pos_y > bbox.loc.y as f64 + bbox.size.h as f64 {
-            pos_y = bbox.loc.y as f64 + bbox.size.h as f64;
+            if pos_y < bbox.loc.y as f64 {
+                pos_y = bbox.loc.y as f64
+            } else if pos_y > bbox.loc.y as f64 + bbox.size.h as f64 {
+                pos_y = bbox.loc.y as f64 + bbox.size.h as f64;
+            }
+            return (pos_x, pos_y).into();
+        } else {
+            let size = self.output_map.borrow().find_by_index(0).unwrap().size();
+            if pos_x < 0f64 {
+                pos_x = 0f64;
+            }
+            if pos_y < 0f64 {
+                pos_y = 0f64;
+            }
+            if pos_x > size.w as f64 {
+                pos_x = size.w as f64;
+            }
+            if pos_y > size.h as f64 {
+                pos_y = size.h as f64;
+            }
+            return (pos_x, pos_y).into();
         }
-        (pos_x, pos_y).into()
     }
 }
 
@@ -336,10 +364,9 @@ impl ConsolationState<UdevData> {
                         error!(self.log, "Error switching to vt {}: {}", vt, err);
                     }
                 }
-                KeyAction::Run(cmd,args) => {
+                KeyAction::Run(cmd, args) => {
                     info!(self.log, "Starting program"; "cmd" => cmd.clone());
-                    if let Err(e) = Command::new(&cmd)
-                        .args(args).spawn() {
+                    if let Err(e) = Command::new(&cmd).args(args).spawn() {
                         error!(self.log,
                             "Failed to start program";
                             "cmd" => cmd,
@@ -649,36 +676,36 @@ impl ConsolationState<UdevData> {
 
         let (mut pos_x, mut pos_y) = pos.into();
 
-        let bbox = top_window_get_bbox(&*self.window_map.borrow()).unwrap();
-        if pos_x < bbox.loc.x as f64 {
-            pos_x = bbox.loc.x as f64
-        } else if pos_x > bbox.loc.x as f64 + bbox.size.w as f64 {
-            pos_x = bbox.loc.x as f64 + bbox.size.w as f64;
-        }
+        let bbox = top_window_get_bbox(&*self.window_map.borrow());
+        if let Some(bbox) = bbox {
+            if pos_x < bbox.loc.x as f64 {
+                pos_x = bbox.loc.x as f64
+            } else if pos_x > bbox.loc.x as f64 + bbox.size.w as f64 {
+                pos_x = bbox.loc.x as f64 + bbox.size.w as f64;
+            }
 
-        if pos_y < bbox.loc.y as f64 {
-            pos_y = bbox.loc.y as f64
-        } else if pos_y > bbox.loc.y as f64 + bbox.size.h as f64 {
-            pos_y = bbox.loc.y as f64 + bbox.size.h as f64;
-        }
-        (pos_x, pos_y).into()
-
-        /*
-
-        let (pos_x, pos_y) = pos.into();
-        let output_map = self.output_map.borrow();
-        let max_x = output_map.width();
-        let clamped_x = pos_x.max(0.0).min(max_x as f64);
-        let max_y = output_map.height(clamped_x as i32);
-
-        if let Some(max_y) = max_y {
-            let clamped_y = pos_y.max(0.0).min(max_y as f64);
-
-            (clamped_x, clamped_y).into()
+            if pos_y < bbox.loc.y as f64 {
+                pos_y = bbox.loc.y as f64
+            } else if pos_y > bbox.loc.y as f64 + bbox.size.h as f64 {
+                pos_y = bbox.loc.y as f64 + bbox.size.h as f64;
+            }
+            return (pos_x, pos_y).into();
         } else {
-            (clamped_x, pos_y).into()
+            let size = self.output_map.borrow().find_by_index(0).unwrap().size();
+            if pos_x < 0f64 {
+                pos_x = 0f64;
+            }
+            if pos_y < 0f64 {
+                pos_y = 0f64;
+            }
+            if pos_x > size.w as f64 {
+                pos_x = size.w as f64;
+            }
+            if pos_y > size.h as f64 {
+                pos_y = size.h as f64;
+            }
+            return (pos_x, pos_y).into();
         }
-        */
     }
 }
 
@@ -724,9 +751,12 @@ fn process_keyboard_shortcut(
         ));
     } else if modifiers.logo && keysym == xkb::KEY_Return {
         // run terminal
-        return Some(KeyAction::Run("alacritty".into(),vec!()))
+        return Some(KeyAction::Run("alacritty".into(), vec![]));
     } else if modifiers.logo && keysym == xkb::KEY_s {
-        return Some(KeyAction::Run("steam".into(), vec!("-tenfoot".into(), "-steamos".into())))
+        return Some(KeyAction::Run(
+            "steam".into(),
+            vec!["-tenfoot".into(), "-steamos".into()],
+        ));
     } else if modifiers.logo && keysym >= xkb::KEY_1 && keysym <= xkb::KEY_9 {
         return Some(KeyAction::Screen((keysym - xkb::KEY_1) as usize));
     } else if modifiers.logo && modifiers.shift && keysym == xkb::KEY_M {
@@ -751,6 +781,13 @@ fn process_keyboard_shortcut(
             return Some(KeyAction::NavigateBack);
         }
     }
+    None
+}
 
-    return None;
+pub fn top_window_get_bbox(window_map: &WindowMap) -> Option<Rectangle<i32, Logical>> {
+    let mut bounding_box_return = None;
+    window_map.with_window_top(|_toplevel_surface, mut _initial_place, &bounding_box| {
+        bounding_box_return = Some(bounding_box);
+    });
+    bounding_box_return
 }

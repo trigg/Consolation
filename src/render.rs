@@ -16,14 +16,6 @@ use crate::{
     window_map::WindowMap,
 };
 
-pub fn top_window_get_bbox(window_map: &WindowMap) -> Option<Rectangle<i32, Logical>> {
-    let mut bounding_box_return = Some(Rectangle::from_loc_and_size((0, 0), (1, 1)));
-    window_map.with_window_top(|_toplevel_surface, mut _initial_place, &bounding_box| {
-        bounding_box_return = Some(bounding_box);
-    });
-    return bounding_box_return;
-}
-
 pub fn render_background(_enderer: &mut Gles2Renderer, frame: &mut Gles2Frame) {
     let _ = frame.clear([0.0, 0.0, 0.2, 1.0]);
 }

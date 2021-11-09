@@ -4,6 +4,7 @@ use std::{cell::RefCell, sync::Mutex};
 
 #[cfg(feature = "image")]
 use image::{ImageBuffer, Rgba};
+use rusttype::Font;
 use slog::Logger;
 #[cfg(feature = "image")]
 use smithay::backend::renderer::gles2::{Gles2Error, Gles2Renderer, Gles2Texture};
@@ -23,7 +24,6 @@ use smithay::{
         shell::wlr_layer::Layer,
     },
 };
-use rusttype::Font;
 
 use crate::{shell::SurfaceData, window_map::WindowMap};
 
@@ -78,16 +78,29 @@ where
             (0, 0).into()
         }
     };
-    draw_surface_tree(
-        renderer,
-        frame,
-        surface,
-        location - delta,
-        output_scale,
-        log,
-        output,
-        bbox,
-    )
+    if bbox.is_none() {
+        draw_surface_tree(
+            renderer,
+            frame,
+            surface,
+            location - delta,
+            output_scale,
+            log,
+            output,
+            output,
+        )
+    } else {
+        draw_surface_tree(
+            renderer,
+            frame,
+            surface,
+            location - delta,
+            output_scale,
+            log,
+            output,
+            bbox,
+        )
+    }
 }
 
 fn draw_surface_tree<R, E, F, T>(
@@ -607,14 +620,14 @@ where
     Ok(())
 }
 
-pub fn string_rusttype_size() -> Rectangle<i32, Logical>{
-    Rectangle::from_loc_and_size((0,0), (1,1)) // TODO
+pub fn string_rusttype_size() -> Rectangle<i32, Logical> {
+    Rectangle::from_loc_and_size((0, 0), (1, 1)) // TODO
 }
 
 pub fn draw_string_rusttype(
     renderer: &mut Gles2Renderer,
     _font: &Font<'static>,
-    _frame: &mut dyn Frame<Error=Gles2Error,TextureId=Gles2Texture>,
+    _frame: &mut dyn Frame<Error = Gles2Error, TextureId = Gles2Texture>,
     _texture: Gles2Texture,
     _output_location: Point<f64, Logical>,
     _value: String,

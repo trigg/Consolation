@@ -70,10 +70,10 @@ use smithay::{
 
 use crate::{drawing::*, window_map::WindowMap};
 use crate::{
+    input_handler::top_window_get_bbox,
     render::render_background,
     render::render_layers_and_windows,
     render::render_window_select,
-    render::top_window_get_bbox,
     state::{Backend, ConsolationState},
 };
 
@@ -268,20 +268,22 @@ pub fn run_udev(log: Logger) {
             display.borrow_mut().flush_clients(&mut state);
             state.window_map.borrow_mut().refresh();
             state.output_map.borrow_mut().refresh();
-            
             // Focus the top item. Popups first
             let focused_popup = state.window_map.borrow_mut().popups().next();
             if focused_popup.is_some() {
                 let serial = SCOUNTER.next_serial();
-                state.keyboard.set_focus(focused_popup.unwrap().get_surface(),serial);
-            }else{
+                state
+                    .keyboard
+                    .set_focus(focused_popup.unwrap().get_surface(), serial);
+            } else {
                 let focused_window = state.window_map.borrow_mut().windows().next();
                 if focused_window.is_some() {
                     let serial = SCOUNTER.next_serial();
-                    state.keyboard.set_focus(focused_window.unwrap().get_surface(),serial);
+                    state
+                        .keyboard
+                        .set_focus(focused_window.unwrap().get_surface(), serial);
                 }
             }
-                
         }
     }
 
@@ -884,9 +886,9 @@ fn render_surface(
                                 }
                             }
                         }
-                        let bbox = top_window_get_bbox(&*window_map).unwrap();
                         // draw the cursor as relevant
                         {
+                            let bbox = top_window_get_bbox(&*window_map);
                             // reset the cursor if the surface is no longer alive
                             let mut reset = false;
                             if let CursorImageStatus::Image(ref surface) = *cursor_status {
@@ -905,7 +907,7 @@ fn render_surface(
                                     output_scale,
                                     logger,
                                     Some(output_geometry),
-                                    Some(bbox),
+                                    bbox,
                                 )?;
                             } else {
                                 frame.render_texture_at(

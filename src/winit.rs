@@ -21,8 +21,8 @@ use slog::Logger;
 
 use crate::state::{Backend, ConsolationState};
 use crate::{
-    drawing::*, render::render_background, render::render_layers_and_windows,
-    render::render_window_select, render::top_window_get_bbox,
+    drawing::*, input_handler::top_window_get_bbox, render::render_background,
+    render::render_layers_and_windows, render::render_window_select,
 };
 
 pub const OUTPUT_NAME: &str = "winit";
@@ -220,10 +220,10 @@ pub fn run_winit(log: Logger) {
                                 }
                             }
                         }
-                        // Get the bounding box of the current window for correct scaling
-                        let bbox = top_window_get_bbox(&*state.window_map.borrow()).unwrap();
                         // draw the cursor as relevant
                         {
+                            // Get the bounding box of the current window for correct scaling
+                            let bbox = top_window_get_bbox(&*state.window_map.borrow());
                             let mut guard = state.cursor_status.lock().unwrap();
                             // reset the cursor if the surface is no longer alive
                             let mut reset = false;
@@ -245,7 +245,7 @@ pub fn run_winit(log: Logger) {
                                     output_scale,
                                     &log,
                                     Some(output_geometry),
-                                    Some(bbox),
+                                    bbox,
                                 )?;
                             } else {
                                 cursor_visible = true;
@@ -294,20 +294,22 @@ pub fn run_winit(log: Logger) {
             display.borrow_mut().flush_clients(&mut state);
             state.window_map.borrow_mut().refresh();
             state.output_map.borrow_mut().refresh();
-            
             // Focus the top item. Popups first
             let focused_popup = state.window_map.borrow_mut().popups().next();
             if focused_popup.is_some() {
                 let serial = SCOUNTER.next_serial();
-                state.keyboard.set_focus(focused_popup.unwrap().get_surface(),serial);
-            }else{
+                state
+                    .keyboard
+                    .set_focus(focused_popup.unwrap().get_surface(), serial);
+            } else {
                 let focused_window = state.window_map.borrow_mut().windows().next();
                 if focused_window.is_some() {
                     let serial = SCOUNTER.next_serial();
-                    state.keyboard.set_focus(focused_window.unwrap().get_surface(),serial);
+                    state
+                        .keyboard
+                        .set_focus(focused_window.unwrap().get_surface(), serial);
                 }
             }
-            
         }
 
         #[cfg(feature = "debug")]
