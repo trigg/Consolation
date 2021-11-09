@@ -99,15 +99,16 @@ impl<Backend> ConsolationState<Backend> {
         };
         let state = match evt.state() {
             input::ButtonState::Pressed => {
-                // change the keyboard focus unless the pointer is grabbed
-                if !self.pointer.is_grabbed() {
+                // We do not change focus on mouse input
+                
+                /*if !self.pointer.is_grabbed() {
                     let under = self
                         .window_map
                         .borrow_mut()
                         .get_surface_and_bring_to_top(self.pointer_location);
                     self.keyboard
                         .set_focus(under.as_ref().map(|&(ref s, _)| s), serial);
-                }
+                }*/
                 wl_pointer::ButtonState::Pressed
             }
             input::ButtonState::Released => wl_pointer::ButtonState::Released,
@@ -173,9 +174,11 @@ impl ConsolationState<WinitData> {
                     info!(self.log, "Quitting.");
                     self.running.store(false, Ordering::SeqCst);
                 }
-                KeyAction::Run(cmd) => {
+                KeyAction::Run(cmd,args) => {
                     info!(self.log, "Starting program"; "cmd" => cmd.clone());
-                    if let Err(e) = Command::new(&cmd).spawn() {
+                    if let Err(e) = Command::new(&cmd)
+                        .args(args)
+                        .spawn() {
                         error!(self.log,
                             "Failed to start program";
                             "cmd" => cmd,
@@ -278,21 +281,25 @@ impl ConsolationState<WinitData> {
     }
 
     fn on_pointer_move_absolute<B: InputBackend>(&mut self, evt: B::PointerMotionAbsoluteEvent) {
-        if self.menu_open {
-            return;
+        if self.menu_open { 
+            return; 
         }
-        let output_size = self
+        /*let output_size = self
             .output_map
             .borrow()
             .find_by_name(crate::winit::OUTPUT_NAME)
             .map(|o| o.size())
-            .unwrap();
-        let pos = evt.position_transformed(output_size);
+            .unwrap();*/
+        let bbox = top_window_get_bbox(&*self.window_map.borrow()).unwrap();
+        let pos = evt.position_transformed((bbox.size.w, bbox.size.h).into());
+        let pos = (pos.x + bbox.loc.x as f64 ,pos.y + bbox.loc.y as f64).into();
+
         self.pointer_location = self.clamp_coords(pos);
         let serial = SCOUNTER.next_serial();
         let under = self.window_map.borrow().get_surface_under(pos);
         self.pointer.motion(pos, under, serial, evt.time());
     }
+
     fn clamp_coords(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
         if self.output_map.borrow().is_empty() {
             return pos;
@@ -331,9 +338,10 @@ impl ConsolationState<UdevData> {
                         error!(self.log, "Error switching to vt {}: {}", vt, err);
                     }
                 }
-                KeyAction::Run(cmd) => {
+                KeyAction::Run(cmd,args) => {
                     info!(self.log, "Starting program"; "cmd" => cmd.clone());
-                    if let Err(e) = Command::new(&cmd).spawn() {
+                    if let Err(e) = Command::new(&cmd)
+                        .args(args).spawn() {
                         error!(self.log,
                             "Failed to start program";
                             "cmd" => cmd,
@@ -830,7 +838,7 @@ enum KeyAction {
     /// Trigger a vt-switch
     VtSwitch(i32),
     /// run a command
-    Run(String),
+    Run(String, Vec<String>),
     /// Switch the current screen
     Screen(usize),
     ScaleUp,
@@ -864,7 +872,9 @@ fn process_keyboard_shortcut(
         ));
     } else if modifiers.logo && keysym == xkb::KEY_Return {
         // run terminal
-        return Some(KeyAction::Run("alacritty".into()));
+        return Some(KeyAction::Run("alacritty".into(),vec!()))
+    } else if modifiers.logo && keysym == xkb::KEY_s {
+        return Some(KeyAction::Run("steam".into(), vec!("-tenfoot".into(), "-steamos".into())))
     } else if modifiers.logo && keysym >= xkb::KEY_1 && keysym <= xkb::KEY_9 {
         return Some(KeyAction::Screen((keysym - xkb::KEY_1) as usize));
     } else if modifiers.logo && modifiers.shift && keysym == xkb::KEY_M {

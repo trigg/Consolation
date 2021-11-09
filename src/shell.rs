@@ -376,9 +376,6 @@ pub fn init_shell<BackendData: 'static>(
                             surface.send_configure();
                         }
                     }
-                    // Do not send a configure here, the initial configure
-                    // of a xdg_surface has to be sent during the commit if
-                    // the surface is not already configured
                     state
                         .window_map
                         .borrow_mut()
@@ -406,7 +403,7 @@ pub fn init_shell<BackendData: 'static>(
                     state
                         .window_map
                         .borrow_mut()
-                        .insert_popup(PopupKind::Xdg(surface));
+                        .insert_popup(PopupKind::Xdg(surface), positioner.get_geometry());
                 }
 
                 XdgRequest::RePosition {

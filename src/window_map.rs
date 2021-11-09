@@ -298,6 +298,8 @@ impl Window {
 #[derive(Debug)]
 pub struct Popup {
     popup: PopupKind,
+    location: Point<i32, Logical>,
+    bbox: Rectangle<i32, Logical>,
 }
 
 #[derive(Debug, Default)]
@@ -306,6 +308,51 @@ pub struct WindowMap {
     popups: Vec<Popup>,
 
     pub layers: LayerMap,
+}
+
+impl Popup {
+    /// Finds the topmost surface under this point if any and returns it together with the location of this
+    /// surface.
+    fn matching(&self, point: Point<f64, Logical>) -> Option<(wl_surface::WlSurface, Point<i32, Logical>)> {
+        if !self.bbox.to_f64().contains(point) {
+            return None;
+        }
+        // need to check more carefully
+        let found = RefCell::new(None);
+        if let Some(wl_surface) = self.popup.get_surface() {
+            with_surface_tree_downward(
+                wl_surface,
+                self.location,
+                |wl_surface, states, location| {
+                    let mut location = *location;
+                    let data = states.data_map.get::<RefCell<SurfaceData>>();
+
+                    if states.role == Some("subsurface") {
+                        let current = states.cached_state.current::<SubsurfaceCachedState>();
+                        location += current.location;
+                    }
+
+                    let contains_the_point = data
+                        .map(|data| {
+                            data.borrow()
+                                .contains_point(&*states.cached_state.current(), point - location.to_f64())
+                        })
+                        .unwrap_or(false);
+                    if contains_the_point {
+                        *found.borrow_mut() = Some((wl_surface.clone(), location));
+                    }
+
+                    TraversalAction::DoChildren(location)
+                },
+                |_, _, _| {},
+                |_, _, _| {
+                    // only continue if the point is not found
+                    found.borrow().is_none()
+                },
+            );
+        }
+        found.into_inner()
+    }
 }
 
 impl WindowMap {
@@ -327,8 +374,12 @@ impl WindowMap {
         self.windows.iter().map(|w| w.toplevel.clone())
     }
 
-    pub fn insert_popup(&mut self, popup: PopupKind) {
-        let popup = Popup { popup };
+    pub fn popups(&self) -> impl Iterator<Item = PopupKind> + '_ {
+        self.popups.iter().map(|w| w.popup.clone())
+    }
+
+    pub fn insert_popup(&mut self, popup: PopupKind, location: Rectangle<i32, Logical>) {
+        let popup = Popup { popup, location: location.loc, bbox: location };
         self.popups.push(popup);
     }
 
@@ -341,6 +392,13 @@ impl WindowMap {
         }
         if let Some(res) = self.layers.get_surface_under(&Layer::Top, point) {
             return Some(res);
+        }
+        
+        
+        for w in &self.popups {
+            if let Some(surface) = w.matching(point) {
+                return Some(surface);
+            }
         }
 
         for w in &self.windows {
@@ -426,10 +484,11 @@ impl WindowMap {
     where
         Func: FnMut(&Kind, Point<i32, Logical>, &Rectangle<i32, Logical>),
     {
-        for w in self.windows.iter() {
+        if self.windows.len()>0{
+            let w = self.windows.get(0).unwrap();
             f(&w.toplevel, w.location, &w.bbox);
-            return;
         }
+    
     }
     pub fn with_child_popups<Func>(&self, base: &wl_surface::WlSurface, mut f: Func)
     where

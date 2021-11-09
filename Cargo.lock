@@ -203,6 +203,7 @@ dependencies = [
  "image",
  "input 0.6.0",
  "rand",
+ "rusttype",
  "slog",
  "slog-async",
  "slog-scope",

@@ -291,17 +291,23 @@ pub fn run_winit(log: Logger) {
         {
             state.running.store(false, Ordering::SeqCst);
         } else {
-            let serial = SCOUNTER.next_serial();
             display.borrow_mut().flush_clients(&mut state);
             state.window_map.borrow_mut().refresh();
             state.output_map.borrow_mut().refresh();
-            let focused_window = state.window_map.borrow_mut().windows().next();
-            if focused_window.is_some() {
-                state
-                    .keyboard
-                    .set_focus(focused_window.unwrap().get_surface(), serial);
-            } else {
+            
+            // Focus the top item. Popups first
+            let focused_popup = state.window_map.borrow_mut().popups().next();
+            if focused_popup.is_some() {
+                let serial = SCOUNTER.next_serial();
+                state.keyboard.set_focus(focused_popup.unwrap().get_surface(),serial);
+            }else{
+                let focused_window = state.window_map.borrow_mut().windows().next();
+                if focused_window.is_some() {
+                    let serial = SCOUNTER.next_serial();
+                    state.keyboard.set_focus(focused_window.unwrap().get_surface(),serial);
+                }
             }
+            
         }
 
         #[cfg(feature = "debug")]

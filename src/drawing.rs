@@ -23,6 +23,7 @@ use smithay::{
         shell::wlr_layer::Layer,
     },
 };
+use rusttype::Font;
 
 use crate::{shell::SurfaceData, window_map::WindowMap};
 
@@ -604,6 +605,28 @@ where
     }
 
     Ok(())
+}
+
+pub fn string_rusttype_size() -> Rectangle<i32, Logical>{
+    Rectangle::from_loc_and_size((0,0), (1,1)) // TODO
+}
+
+pub fn draw_string_rusttype(
+    renderer: &mut Gles2Renderer,
+    _font: &Font<'static>,
+    _frame: &mut dyn Frame<Error=Gles2Error,TextureId=Gles2Texture>,
+    _texture: Gles2Texture,
+    _output_location: Point<f64, Logical>,
+    _value: String,
+) -> Result<(), Gles2Error>
+where
+{
+    use smithay::backend::renderer::gles2::ffi;
+    renderer.with_context(|_renderer, gl| unsafe {
+        gl.BindTexture(ffi::TEXTURE_2D, 0);
+
+        // TODO
+    })
 }
 
 pub fn import_bitmap<C: std::ops::Deref<Target = [u8]>>(
