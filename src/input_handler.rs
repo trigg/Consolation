@@ -7,8 +7,6 @@ use crate::render::top_window_get_bbox;
 use crate::udev::UdevData;
 #[cfg(feature = "winit")]
 use crate::winit::WinitData;
-#[cfg(feature = "x11")]
-use crate::x11::X11Data;
 
 use smithay::{
     backend::input::{
@@ -22,7 +20,7 @@ use smithay::{
     },
 };
 
-#[cfg(any(feature = "winit", feature = "x11"))]
+#[cfg(any(feature = "winit"))]
 use smithay::{backend::input::PointerMotionAbsoluteEvent, wayland::output::Mode};
 
 #[cfg(feature = "udev")]
@@ -681,152 +679,6 @@ impl ConsolationState<UdevData> {
             (clamped_x, pos_y).into()
         }
         */
-    }
-}
-
-#[cfg(feature = "x11")]
-impl ConsolationState<X11Data> {
-    pub fn process_input_event<B: InputBackend>(&mut self, event: InputEvent<B>) {
-        match event {
-            InputEvent::Keyboard { event } => match self.keyboard_key_to_action::<B>(event) {
-                KeyAction::None => (),
-
-                KeyAction::Quit => {
-                    info!(self.log, "Quitting.");
-                    self.running.store(false, Ordering::SeqCst);
-                }
-
-                KeyAction::Run(cmd) => {
-                    info!(self.log, "Starting program"; "cmd" => cmd.clone());
-
-                    if let Err(e) = Command::new(&cmd).spawn() {
-                        error!(self.log,
-                            "Failed to start program";
-                            "cmd" => cmd,
-                            "err" => format!("{:?}", e)
-                        );
-                    }
-                }
-
-                KeyAction::ScaleUp => {
-                    let current_scale = {
-                        self.output_map
-                            .borrow()
-                            .find_by_name(crate::x11::OUTPUT_NAME)
-                            .map(|o| o.scale())
-                            .unwrap_or(1.0)
-                    };
-
-                    self.output_map
-                        .borrow_mut()
-                        .update_scale_by_name(current_scale + 0.25f32, crate::x11::OUTPUT_NAME);
-                }
-
-                KeyAction::ScaleDown => {
-                    let current_scale = {
-                        self.output_map
-                            .borrow()
-                            .find_by_name(crate::x11::OUTPUT_NAME)
-                            .map(|o| o.scale())
-                            .unwrap_or(1.0)
-                    };
-
-                    self.output_map.borrow_mut().update_scale_by_name(
-                        f32::max(1.0f32, current_scale + 0.25f32),
-                        crate::x11::OUTPUT_NAME,
-                    );
-                }
-                KeyAction::Menu => {
-                    info!(self.log, "MENU KEY");
-                    self.menu_open = !self.menu_open;
-                    if self.menu_open {
-                        self.menu_index = 0;
-                    } else {
-                        self.menu_index = -1;
-                    }
-                }
-                KeyAction::DirectionUp => {
-                    if self.menu_open {
-                        if self.menu_index > 0 {
-                            self.menu_index = self.menu_index - 1;
-                        }
-                    }
-                }
-                KeyAction::DirectionLeft => {}
-                KeyAction::DirectionDown => {
-                    if self.menu_open {
-                        self.menu_index = self.menu_index + 1;
-                        if self.menu_index >= self.window_map.borrow_mut().len() {
-                            self.menu_index = self.window_map.borrow_mut().len() - 1;
-                        }
-                    }
-                }
-                KeyAction::DirectionRight => {}
-                KeyAction::NavigateForward => {
-                    if self.menu_open {
-                        self.window_map
-                            .borrow_mut()
-                            .bring_nth_window_to_top(self.menu_index as usize);
-                        self.menu_open = false;
-                        self.menu_index = -1;
-                    }
-                }
-                KeyAction::NavigateBack => {}
-
-                action => {
-                    warn!(
-                        self.log,
-                        "Key action {:?} unsupported on x11 backend.", action
-                    );
-                }
-            },
-
-            InputEvent::PointerMotionAbsolute { event } => {
-                self.on_pointer_move_absolute::<B>(event)
-            }
-            InputEvent::PointerButton { event } => self.on_pointer_button::<B>(event),
-            InputEvent::PointerAxis { event } => self.on_pointer_axis::<B>(event),
-            _ => (), // other events are not handled in consolation (yet)
-        }
-    }
-
-    fn on_pointer_move_absolute<B: InputBackend>(&mut self, evt: B::PointerMotionAbsoluteEvent) {
-        if self.menu_open {
-            return;
-        }
-        let output_size = self
-            .output_map
-            .borrow()
-            .find_by_name(crate::x11::OUTPUT_NAME)
-            .map(|o| o.size())
-            .unwrap();
-
-        let pos = evt.position_transformed(output_size);
-        self.pointer_location = self.clamp_coords(pos);
-        let serial = SCOUNTER.next_serial();
-        let under = self.window_map.borrow().get_surface_under(pos);
-        self.pointer.motion(pos, under, serial, evt.time());
-    }
-    fn clamp_coords(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
-        if self.output_map.borrow().is_empty() {
-            return pos;
-        }
-
-        let (mut pos_x, mut pos_y) = pos.into();
-
-        let bbox = top_window_get_bbox(&*self.window_map.borrow()).unwrap();
-        if pos_x < bbox.loc.x as f64 {
-            pos_x = bbox.loc.x as f64
-        } else if pos_x > bbox.loc.x as f64 + bbox.size.w as f64 {
-            pos_x = bbox.loc.x as f64 + bbox.size.w as f64;
-        }
-
-        if pos_y < bbox.loc.y as f64 {
-            pos_y = bbox.loc.y as f64
-        } else if pos_y > bbox.loc.y as f64 + bbox.size.h as f64 {
-            pos_y = bbox.loc.y as f64 + bbox.size.h as f64;
-        }
-        (pos_x, pos_y).into()
     }
 }
 

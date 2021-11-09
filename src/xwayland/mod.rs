@@ -27,6 +27,7 @@ use x11rb::{
 use crate::{
     window_map::{Kind, WindowMap, TitleContainer,X11Id},
     ConsolationState,
+    output_map::OutputMap,
 };
 
 impl<BackendData: 'static> ConsolationState<BackendData> {
@@ -37,7 +38,7 @@ impl<BackendData: 'static> ConsolationState<BackendData> {
     }
 
     pub fn xwayland_ready(&mut self, connection: UnixStream, client: Client) {
-        let (wm, source) = X11State::start_wm(connection, self.window_map.clone(), self.log.clone()).unwrap();
+        let (wm, source) = X11State::start_wm(connection, self.window_map.clone(), self.output_map.clone(), self.log.clone()).unwrap();
         let wm = Rc::new(RefCell::new(wm));
         client.data_map().insert_if_missing(|| Rc::clone(&wm));
         let log = self.log.clone();
@@ -76,12 +77,14 @@ struct X11State {
     log: slog::Logger,
     unpaired_surfaces: HashMap<u32, (Window, Point<i32, Logical,>)>,
     window_map: Rc<RefCell<WindowMap>>,
+    output_map: Rc<RefCell<OutputMap>>,
 }
 
 impl X11State {
     fn start_wm(
         connection: UnixStream,
         window_map: Rc<RefCell<WindowMap>>,
+        output_map: Rc<RefCell<OutputMap>>,
         log: slog::Logger,
     ) -> Result<(Self, X11Source), Box<dyn std::error::Error>> {
         // Create an X11 connection. XWayland only uses screen 0.
@@ -128,6 +131,7 @@ impl X11State {
             unpaired_surfaces: Default::default(),
             window_map,
             log: log.clone(),
+            output_map,
         };
 
         Ok((wm, X11Source::new(conn, win, atoms._CONSOLATION_CLOSE_CONNECTION, log)))
@@ -146,16 +150,20 @@ impl X11State {
                     aux = aux.sibling(r.sibling);
                 }
                 if r.value_mask & u16::from(ConfigWindow::X) != 0 {
-                    aux = aux.x(i32::try_from(r.x).unwrap());
+                    //aux = aux.x(i32::try_from(r.x).unwrap());
+                    aux = aux.x(0);
                 }
                 if r.value_mask & u16::from(ConfigWindow::Y) != 0 {
-                    aux = aux.y(i32::try_from(r.y).unwrap());
+                    //aux = aux.y(i32::try_from(r.y).unwrap());
+                    aux = aux.y(0);
                 }
                 if r.value_mask & u16::from(ConfigWindow::WIDTH) != 0 {
-                    aux = aux.width(u32::try_from(r.width).unwrap());
+                    //aux = aux.width(u32::try_from(r.width).unwrap());
+                    aux = aux.width(self.output_map.borrow_mut().find_by_index(0).unwrap().size().w as u32);
                 }
                 if r.value_mask & u16::from(ConfigWindow::HEIGHT) != 0 {
-                    aux = aux.height(u32::try_from(r.height).unwrap());
+                    //aux = aux.height(u32::try_from(r.height).unwrap());
+                    aux = aux.height(self.output_map.borrow_mut().find_by_index(0).unwrap().size().h as u32);
                 }
                 if r.value_mask & u16::from(ConfigWindow::BORDER_WIDTH) != 0 {
                     aux = aux.border_width(u32::try_from(r.border_width).unwrap());
@@ -165,13 +173,8 @@ impl X11State {
             Event::MapRequest(r) => {
                 // Just grant the wish
                 self.conn.map_window(r.window)?;
-                
-                let wl_surface = self.window_map.borrow_mut().find_x11_window(r.window);
-                if let Some(surface) = wl_surface{
-                    if let Some(kind) = surface.get_surface() {
-                        self.update_title(&kind, r.window);
-                    }
-                }
+                self.update_title_x11(r.window);
+
             }
             Event::ClientMessage(msg) => {
                 if msg.type_ == self.atoms.WL_SURFACE_ID {
@@ -210,6 +213,8 @@ impl X11State {
                             self.new_window(msg.window, surface, location);
                         },
                     }
+                }else{
+                    self.update_title_x11(msg.window);
                 }
             }
             _ => {}
@@ -234,19 +239,52 @@ impl X11State {
         
     }
 
+    fn update_title_x11(&mut self, window: Window){
+        let wl_surface = self.window_map.borrow_mut().find_x11_window(window);
+        if let Some(surface) = wl_surface{
+            if let Some(kind) = surface.get_surface() {
+                self.update_title(&kind, window);
+            }
+        }
+    }
+
+    fn get_title(&mut self, window: Window)->Option<String>{
+        if let Some(title) = self.get_string(window, self.atoms._NET_WM_NAME, self.atoms.UTF8_STRING){
+            return Some(title);
+        }
+        if let Some(title) = self.get_string(window, self.atoms._NET_WM_NAME, self.atoms.STRING){
+            return Some(title);
+        }
+        if let Some(title) = self.get_string(window, self.atoms.WM_NAME, self.atoms.UTF8_STRING){
+            return Some(title);
+        }
+        if let Some(title) = self.get_string(window, self.atoms.WM_NAME, self.atoms.STRING){
+            return Some(title);
+        }
+        if let Some(title) = self.get_string(window, self.atoms.XA_WM_NAME, self.atoms.STRING){
+            return Some(title);
+        }
+        None
+    }
+
+    fn get_string(&mut self, window: Window, atom_name :u32, atom_type: u32) -> Option<String>{
+        if let Ok(title) = String::from_utf8(
+            self.conn.get_property(false, window, atom_name, atom_type,0,1024)
+            .unwrap()
+            .reply()
+            .unwrap()
+            .value.clone()
+        ){
+            return Some(title);
+        }
+        None
+    }
+
     fn update_title(&mut self, surface: &WlSurface, window: Window){
-        let title = {
-            String::from_utf8(
-                self.conn.get_property(false, window, self.atoms._NET_WM_NAME, self.atoms.UTF8_STRING,0,1024)
-                .unwrap()
-                .reply()
-                .unwrap()
-                .value.clone()
-            ).unwrap_or("".to_string())
-        };
+        let title = self.get_title(window);
         with_states(surface, 
             |states| {
-                states.data_map.insert_if_missing(|| TitleContainer{title});
+                if let Some(title) = title { states.data_map.insert_if_missing(|| TitleContainer{title}); }
                 states.data_map.insert_if_missing(|| X11Id{window: window as u32});
             }
         ).unwrap();

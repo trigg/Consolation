@@ -5,8 +5,6 @@ static POSSIBLE_BACKENDS: &[&str] = &[
     "--winit : Run consolation as a X11 or Wayland client using winit.",
     #[cfg(feature = "udev")]
     "--tty-udev : Run consolation as a tty udev client (requires root if without logind).",
-    #[cfg(feature = "x11")]
-    "--x11 : Run consolation as an X11 client.",
 ];
 
 fn main() {
@@ -36,11 +34,6 @@ fn main() {
         Some("--tty-udev") => {
             slog::info!(log, "Starting consolation on a tty using udev");
             consolation::udev::run_udev(log);
-        }
-        #[cfg(feature = "x11")]
-        Some("--x11") => {
-            slog::info!(log, "Starting consolation with x11 backend");
-            consolation::x11::run_x11(log);
         }
         Some(other) => {
             crit!(log, "Unknown backend: {}", other);
