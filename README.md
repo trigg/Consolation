@@ -15,11 +15,9 @@ Currently the compositor doesn't autodetect the running environment, so the back
 `consolation --tty-udev`
 For running on a TTY console
 
-`consolation --x11`
-For running as an embedded window inside an X11 environment (intended for testing)
 
 `consolation --winit`
-For running as an embedded window inside an Wayland environment (intended for testing)
+For running as an embedded window inside an X11 or Wayland environment (intended for testing)
 
 ### Debug
 
