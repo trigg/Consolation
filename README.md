@@ -6,32 +6,33 @@ Consolation is intended to fill the feature gaps for fullscreen gaming composito
 
 ## Installation
 
-To be done
+### From Sources
+```
+git clone https://github.com/trigg/Consolation.git
+cd Consolation
+cargo build --release
+```
+and the binary will be in 
+`./target/release/consolation`
 
 ## Running
 
-Currently the compositor doesn't autodetect the running environment, so the backend must be explicitly passed on start
+`consolation`
 
-`consolation --tty-udev`
-For running on a TTY console
-
-
-`consolation --winit`
-For running as an embedded window inside an X11 or Wayland environment (intended for testing)
+Consolation will autodetect an X11 or Wayland environment and fall back to drawing with the winit backend if needed.
 
 ### Debug
 
-```
-cargo run -- --winit
-```
+`cargo run`
 
 ## Features
 
 Currently this is not as feature complete as hoped. More to come soon!
 
-- One screen focused at a time
-- Screen aspect-scaled to fit display
-- 'Menu' key right of R-Alt used to open menu.
+- One window focused at a time
+- - Pop ups kept to parent scale
+- Window aspect-scaled to fit display
+- 'Menu' key or 'Alt Gr' used to open menu.
 - - Arrow keys navigate options, Enter to select, Backspace to go back
 - - Switch between active windows
 - - More settings & controls to come
