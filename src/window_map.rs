@@ -313,7 +313,10 @@ pub struct WindowMap {
 impl Popup {
     /// Finds the topmost surface under this point if any and returns it together with the location of this
     /// surface.
-    fn matching(&self, point: Point<f64, Logical>) -> Option<(wl_surface::WlSurface, Point<i32, Logical>)> {
+    fn matching(
+        &self,
+        point: Point<f64, Logical>,
+    ) -> Option<(wl_surface::WlSurface, Point<i32, Logical>)> {
         if !self.bbox.to_f64().contains(point) {
             return None;
         }
@@ -334,8 +337,10 @@ impl Popup {
 
                     let contains_the_point = data
                         .map(|data| {
-                            data.borrow()
-                                .contains_point(&*states.cached_state.current(), point - location.to_f64())
+                            data.borrow().contains_point(
+                                &*states.cached_state.current(),
+                                point - location.to_f64(),
+                            )
                         })
                         .unwrap_or(false);
                     if contains_the_point {
@@ -379,7 +384,11 @@ impl WindowMap {
     }
 
     pub fn insert_popup(&mut self, popup: PopupKind, location: Rectangle<i32, Logical>) {
-        let popup = Popup { popup, location: location.loc, bbox: location };
+        let popup = Popup {
+            popup,
+            location: location.loc,
+            bbox: location,
+        };
         self.popups.push(popup);
     }
 
@@ -393,8 +402,6 @@ impl WindowMap {
         if let Some(res) = self.layers.get_surface_under(&Layer::Top, point) {
             return Some(res);
         }
-        
-        
         for w in &self.popups {
             if let Some(surface) = w.matching(point) {
                 return Some(surface);
@@ -480,16 +487,33 @@ impl WindowMap {
         }
     }
 
-    pub fn with_window_top<Func>(&self, mut f: Func)
+    pub fn with_window_top<Func>(&self, mut f: Func, do_popups: bool)
     where
         Func: FnMut(&Kind, Point<i32, Logical>, &Rectangle<i32, Logical>),
     {
-        if self.windows.len()>0{
-            let w = self.windows.get(0).unwrap();
-            f(&w.toplevel, w.location, &w.bbox);
+        let mut popup_list = vec![];
+        for w in self.windows.iter() {
+            match &w.toplevel {
+                Kind::X11(xwindow) => {
+                    if !xwindow.is_popup() {
+                        f(&w.toplevel, w.location, &w.bbox);
+                        break;
+                    }
+                    popup_list.insert(0, w);
+                }
+                _ => {
+                    f(&w.toplevel, w.location, &w.bbox);
+                    break;
+                }
+            }
         }
-    
+        if do_popups {
+            for w in popup_list.iter().rev() {
+                f(&w.toplevel, w.location, &w.bbox);
+            }
+        }
     }
+
     pub fn with_child_popups<Func>(&self, base: &wl_surface::WlSurface, mut f: Func)
     where
         Func: FnMut(&PopupKind),

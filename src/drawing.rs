@@ -25,7 +25,11 @@ use smithay::{
     },
 };
 
-use crate::{shell::SurfaceData, window_map::WindowMap};
+use crate::{
+    input_handler::top_window_get_bbox,
+    shell::SurfaceData,
+    window_map::{Kind, WindowMap},
+};
 
 struct BufferTextures<T> {
     buffer: Option<wl_buffer::WlBuffer>,
@@ -293,6 +297,15 @@ where
             if !output_rect.overlaps(bounding_box) {
                 return;
             }
+            match toplevel_surface {
+                Kind::X11(xwindow) => {
+                    if xwindow.is_popup() {
+                        menu_index += 1;
+                        return;
+                    }
+                }
+                _ => {}
+            }
             let output_rect_menu = Rectangle::from_loc_and_size((0i32, menu_pos), (200i32, 100i32));
             initial_place.x -= output_rect.loc.x;
             if let Some(wl_surface) = toplevel_surface.get_surface() {
@@ -384,57 +397,60 @@ where
     T: Texture + 'static,
 {
     let mut result = Ok(());
-    // Want to switch to with_window_top to only draw one window
-    // Much more efficient but menus hide the window they're attached to
-    // Needs work!
-    window_map.with_window_top(|toplevel_surface, mut initial_place, &bounding_box| {
-        // redraw the frame, in a simple but inneficient way
-        //window_map.with_windows_from_bottom_to_top(|toplevel_surface, mut initial_place, &bounding_box| {
-        // skip windows that do not overlap with a given output
-        if !output_rect.overlaps(bounding_box) {
-            return;
-        }
 
-        initial_place.x -= output_rect.loc.x;
-        if let Some(wl_surface) = toplevel_surface.get_surface() {
-            // this surface is a root of a subsurface tree that needs to be drawn
-            if let Err(err) = draw_surface_tree(
-                renderer,
-                frame,
-                wl_surface,
-                initial_place,
-                output_scale,
-                log,
-                Some(output_rect),
-                Some(bounding_box),
-            ) {
-                result = Err(err);
+    let box_maybe = top_window_get_bbox(window_map);
+    if box_maybe.is_none() {
+        return result;
+    }
+    let bounding_box = box_maybe.unwrap();
+    window_map.with_window_top(
+        |toplevel_surface, mut initial_place, &_bounding_box| {
+            if !output_rect.overlaps(bounding_box) {
+                return;
             }
-            // furthermore, draw its popups
-            let toplevel_geometry_offset = window_map
-                .geometry(toplevel_surface)
-                .map(|g| g.loc)
-                .unwrap_or_default();
-            window_map.with_child_popups(wl_surface, |popup| {
-                let location = popup.location();
-                let draw_location = initial_place + location + toplevel_geometry_offset;
-                if let Some(wl_surface) = popup.get_surface() {
-                    if let Err(err) = draw_surface_tree(
-                        renderer,
-                        frame,
-                        wl_surface,
-                        draw_location,
-                        output_scale,
-                        log,
-                        Some(output_rect),
-                        Some(bounding_box),
-                    ) {
-                        result = Err(err);
-                    }
+
+            initial_place.x -= output_rect.loc.x;
+            if let Some(wl_surface) = toplevel_surface.get_surface() {
+                // this surface is a root of a subsurface tree that needs to be drawn
+                if let Err(err) = draw_surface_tree(
+                    renderer,
+                    frame,
+                    wl_surface,
+                    initial_place,
+                    output_scale,
+                    log,
+                    Some(output_rect),
+                    Some(bounding_box),
+                ) {
+                    result = Err(err);
                 }
-            });
-        }
-    });
+                // furthermore, draw its popups
+                let toplevel_geometry_offset = window_map
+                    .geometry(toplevel_surface)
+                    .map(|g| g.loc)
+                    .unwrap_or_default();
+                window_map.with_child_popups(wl_surface, |popup| {
+                    let location = popup.location();
+                    let draw_location = initial_place + location + toplevel_geometry_offset;
+                    if let Some(wl_surface) = popup.get_surface() {
+                        if let Err(err) = draw_surface_tree(
+                            renderer,
+                            frame,
+                            wl_surface,
+                            draw_location,
+                            output_scale,
+                            log,
+                            Some(output_rect),
+                            Some(bounding_box),
+                        ) {
+                            result = Err(err);
+                        }
+                    }
+                });
+            }
+        },
+        true,
+    );
 
     result
 }

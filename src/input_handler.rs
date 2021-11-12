@@ -22,7 +22,7 @@ use smithay::{
 };
 
 #[cfg(any(feature = "winit"))]
-use smithay::{backend::input::PointerMotionAbsoluteEvent, wayland::output::Mode};
+use smithay::backend::input::PointerMotionAbsoluteEvent;
 
 #[cfg(feature = "udev")]
 use smithay::{
@@ -86,29 +86,10 @@ impl<Backend> ConsolationState<Backend> {
     }
 
     fn on_pointer_button<B: InputBackend>(&mut self, evt: B::PointerButtonEvent) {
-        if self.menu_open {
-            return;
-        }
         let serial = SCOUNTER.next_serial();
-        let button = match evt.button() {
-            input::MouseButton::Left => 0x110,
-            input::MouseButton::Right => 0x111,
-            input::MouseButton::Middle => 0x112,
-            input::MouseButton::Other(b) => b as u32,
-        };
+        let button = evt.button_code();
         let state = match evt.state() {
-            input::ButtonState::Pressed => {
-                // We do not change focus on mouse input
-                /*if !self.pointer.is_grabbed() {
-                    let under = self
-                        .window_map
-                        .borrow_mut()
-                        .get_surface_and_bring_to_top(self.pointer_location);
-                    self.keyboard
-                        .set_focus(under.as_ref().map(|&(ref s, _)| s), serial);
-                }*/
-                wl_pointer::ButtonState::Pressed
-            }
+            input::ButtonState::Pressed => wl_pointer::ButtonState::Pressed,
             input::ButtonState::Released => wl_pointer::ButtonState::Released,
         };
         self.pointer.button(button, state, serial, evt.time());
@@ -159,12 +140,7 @@ impl<Backend> ConsolationState<Backend> {
 
 #[cfg(feature = "winit")]
 impl ConsolationState<WinitData> {
-    pub fn process_input_event<B>(&mut self, event: InputEvent<B>)
-    where
-        B: InputBackend<SpecialEvent = smithay::backend::winit::WinitEvent>,
-    {
-        use smithay::backend::winit::WinitEvent;
-
+    pub fn process_input_event<B: InputBackend>(&mut self, event: InputEvent<B>) {
         match event {
             InputEvent::Keyboard { event, .. } => match self.keyboard_key_to_action::<B>(event) {
                 KeyAction::None => {}
@@ -256,20 +232,6 @@ impl ConsolationState<WinitData> {
             }
             InputEvent::PointerButton { event, .. } => self.on_pointer_button::<B>(event),
             InputEvent::PointerAxis { event, .. } => self.on_pointer_axis::<B>(event),
-            InputEvent::Special(WinitEvent::Resized { size, .. }) => {
-                self.output_map.borrow_mut().update_mode_by_name(
-                    Mode {
-                        size,
-                        refresh: 60_000,
-                    },
-                    crate::winit::OUTPUT_NAME,
-                );
-
-                let output_mut = self.output_map.borrow();
-                let output = output_mut.find_by_name(crate::winit::OUTPUT_NAME).unwrap();
-
-                self.window_map.borrow_mut().layers.arange_layers(output);
-            }
             _ => {
                 // other events are not handled in consolation (yet)
             }
@@ -786,8 +748,11 @@ fn process_keyboard_shortcut(
 
 pub fn top_window_get_bbox(window_map: &WindowMap) -> Option<Rectangle<i32, Logical>> {
     let mut bounding_box_return = None;
-    window_map.with_window_top(|_toplevel_surface, mut _initial_place, &bounding_box| {
-        bounding_box_return = Some(bounding_box);
-    });
+    window_map.with_window_top(
+        |_toplevel_surface, mut _initial_place, &bounding_box| {
+            bounding_box_return = Some(bounding_box);
+        },
+        false,
+    );
     bounding_box_return
 }

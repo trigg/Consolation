@@ -371,6 +371,7 @@ pub fn init_shell<BackendData: 'static>(
                         let ret = surface.with_pending_state(|state| {
                             state.states.set(xdg_toplevel::State::Fullscreen);
                             state.size = Some(geometry.size);
+                            //state.decoration_mode = Some(Mode::ClientSide);
                         });
                         if ret.is_ok() {
                             surface.send_configure();

@@ -1,4 +1,4 @@
-use slog::{crit, o, Drain};
+use slog::{o, Drain};
 use std::env;
 
 static POSSIBLE_BACKENDS: &[&str] = &[
