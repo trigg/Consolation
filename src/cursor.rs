@@ -1,5 +1,6 @@
-use std::io::Read;
+use std::{io::Read, time::Duration};
 
+use tracing::warn;
 use xcursor::{
     parser::{parse_xcursor, Image},
     CursorTheme,
@@ -13,7 +14,7 @@ pub struct Cursor {
 }
 
 impl Cursor {
-    pub fn load(log: &::slog::Logger) -> Cursor {
+    pub fn load() -> Cursor {
         let name = std::env::var("XCURSOR_THEME")
             .ok()
             .unwrap_or_else(|| "default".into());
@@ -24,13 +25,7 @@ impl Cursor {
 
         let theme = CursorTheme::load(&name);
         let icons = load_icon(&theme)
-            .map_err(|err| {
-                slog::warn!(
-                    log,
-                    "Unable to load xcursor: {}, using fallback cursor",
-                    err
-                )
-            })
+            .map_err(|err| warn!("Unable to load xcursor: {}, using fallback cursor", err))
             .unwrap_or_else(|_| {
                 vec![Image {
                     size: 32,
@@ -47,9 +42,9 @@ impl Cursor {
         Cursor { icons, size }
     }
 
-    pub fn get_image(&self, scale: u32, millis: u32) -> Image {
+    pub fn get_image(&self, scale: u32, time: Duration) -> Image {
         let size = self.size * scale;
-        frame(millis, size, &self.icons)
+        frame(time.as_millis() as u32, size, &self.icons)
     }
 }
 
@@ -60,9 +55,9 @@ fn nearest_images(size: u32, images: &[Image]) -> impl Iterator<Item = &Image> {
         .min_by_key(|image| (size as i32 - image.size as i32).abs())
         .unwrap();
 
-    images.iter().filter(move |image| {
-        image.width == nearest_image.width && image.height == nearest_image.height
-    })
+    images
+        .iter()
+        .filter(move |image| image.width == nearest_image.width && image.height == nearest_image.height)
 }
 
 fn frame(mut millis: u32, size: u32, images: &[Image]) -> Image {
@@ -91,7 +86,7 @@ enum Error {
 
 fn load_icon(theme: &CursorTheme) -> Result<Vec<Image>, Error> {
     let icon_path = theme.load_icon("default").ok_or(Error::NoDefaultCursor)?;
-    let mut cursor_file = std::fs::File::open(&icon_path)?;
+    let mut cursor_file = std::fs::File::open(icon_path)?;
     let mut cursor_data = Vec::new();
     cursor_file.read_to_end(&mut cursor_data)?;
     parse_xcursor(&cursor_data).ok_or(Error::Parse)

@@ -1,71 +1,87 @@
-use slog::{o, Drain};
 use std::env;
 
 static POSSIBLE_BACKENDS: &[&str] = &[
     #[cfg(feature = "winit")]
-    "--winit : Run consolation as a X11 or Wayland client using winit.",
+    "--winit : Run anvil as a X11 or Wayland client using winit.",
     #[cfg(feature = "udev")]
-    "--tty-udev : Run consolation as a tty udev client (requires root if without logind).",
+    "--tty-udev : Run anvil as a tty udev client (requires root if without logind).",
 ];
 
+#[cfg(feature = "profile-with-tracy-mem")]
+#[global_allocator]
+static GLOBAL: profiling::tracy_client::ProfiledAllocator<std::alloc::System> =
+    profiling::tracy_client::ProfiledAllocator::new(std::alloc::System, 10);
+
 fn main() {
-    // A logger facility, here we use the terminal here
-    let log = if std::env::var("CONSOLATION_MUTEX_LOG").is_ok() {
-        slog::Logger::root(
-            std::sync::Mutex::new(slog_term::term_full().fuse()).fuse(),
-            o!(),
-        )
+    if let Ok(env_filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
+        tracing_subscriber::fmt()
+            .compact()
+            .with_env_filter(env_filter)
+            .init();
     } else {
-        slog::Logger::root(
-            slog_async::Async::default(slog_term::term_full().fuse()).fuse(),
-            o!(),
-        )
-    };
-    let _guard = slog_scope::set_global_logger(log.clone());
-    slog_stdlog::init().expect("Could not setup log backend");
+        tracing_subscriber::fmt().compact().init();
+    }
+
+    #[cfg(feature = "profile-with-tracy")]
+    profiling::tracy_client::Client::start();
+
+    profiling::register_thread!("Main Thread");
+
+    #[cfg(feature = "profile-with-puffin")]
+    let _server =
+        puffin_http::Server::new(&format!("0.0.0.0:{}", puffin_http::DEFAULT_PORT)).unwrap();
+    #[cfg(feature = "profile-with-puffin")]
+    profiling::puffin::set_scopes_on(true);
+
     let mut use_winit = false;
     let mut use_tty = false;
-
-    match env::var("XDG_SESSION_TYPE") {
-        Ok(val) => {
-            if val == "tty" {
-                use_tty = true;
-            } else if val == "wayland" {
-                use_winit = true;
-            } else if val == "x11" {
-                use_winit = true;
-            }
-        }
-        Err(_e) => slog::info!(log, "No XDG_SESSION_TYPE environment variable"),
-    }
 
     let arg = ::std::env::args().nth(1);
     match arg.as_ref().map(|s| &s[..]) {
         #[cfg(feature = "winit")]
         Some("--winit") => {
-            slog::info!(log, "Opting for Winit");
-            use_tty = false;
+            tracing::info!("Starting anvil with winit backend");
+            use_winit = true;
         }
         #[cfg(feature = "udev")]
         Some("--tty-udev") => {
-            slog::info!(log, "Opting for TTY/udev");
-            use_winit = false;
+            tracing::info!("Starting anvil on a tty using udev");
+            use_tty = true;
         }
-        _ => {
-            println!("USAGE: consolation --backend");
-            println!();
-            println!("Possible backends are:");
-            for b in POSSIBLE_BACKENDS {
-                println!("\t{}", b);
+        Some(other) => {
+            tracing::error!("Unknown backend: {}", other);
+        }
+        None => {
+            #[allow(clippy::disallowed_macros)]
+            {
+                println!("USAGE: anvil --backend");
+                println!();
+                println!("Possible backends are:");
+                for b in POSSIBLE_BACKENDS {
+                    println!("\t{}", b);
+                }
             }
         }
     }
-    if use_winit {
-        consolation::winit::run_winit(log);
-        return;
+
+    if !use_tty && !use_winit {
+        match env::var("XDG_SESSION_TYPE") {
+            Ok(val) => {
+                if val == "tty" {
+                    use_tty = true;
+                } else if val == "wayland" {
+                    use_winit = true;
+                } else if val == "x11" {
+                    use_winit = true;
+                }
+            }
+            Err(_e) => tracing::info!("No XDG_SESSION_TYPE environment variable"),
+        }
     }
+
     if use_tty {
-        consolation::udev::run_udev(log);
-        return;
+        consolation::udev::run_udev();
+    } else if use_winit {
+        consolation::winit::run_winit();
     }
 }

@@ -1,700 +1,259 @@
 #![allow(clippy::too_many_arguments)]
 
-use std::{cell::RefCell, sync::Mutex};
-
-#[cfg(feature = "image")]
-use image::{ImageBuffer, Rgba};
-use rusttype::Font;
-use slog::Logger;
-#[cfg(feature = "image")]
-use smithay::backend::renderer::gles2::{Gles2Error, Gles2Renderer, Gles2Texture};
 use smithay::{
-    backend::{
-        renderer::{buffer_type, BufferType, Frame, ImportAll, Renderer, Texture, Transform},
-        SwapBuffersError,
-    },
-    reexports::wayland_server::protocol::{wl_buffer, wl_surface},
-    utils::{Logical, Point, Rectangle},
-    wayland::{
-        compositor::{
-            get_role, with_states, with_surface_tree_upward, Damage, SubsurfaceCachedState,
-            SurfaceAttributes, TraversalAction,
+    backend::renderer::{
+        element::{
+            memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
+            surface::WaylandSurfaceRenderElement,
+            AsRenderElements, Kind,
         },
-        seat::CursorImageAttributes,
-        shell::wlr_layer::Layer,
+        ImportAll, ImportMem, Renderer, Texture,
     },
+    input::pointer::CursorImageStatus,
+    render_elements,
+    utils::{Physical, Point, Scale},
+};
+#[cfg(feature = "debug")]
+use smithay::{
+    backend::renderer::{
+        element::{Element, Id, RenderElement},
+        utils::CommitCounter,
+        Frame,
+    },
+    utils::{Buffer, Logical, Rectangle, Size, Transform},
 };
 
-use crate::{
-    input_handler::top_window_get_bbox,
-    shell::SurfaceData,
-    window_map::{Kind, WindowMap},
-};
+pub static CLEAR_COLOR: [f32; 4] = [0.0, 0.0, 0.3, 1.0];
+pub static CLEAR_COLOR_FULLSCREEN: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
 
-struct BufferTextures<T> {
-    buffer: Option<wl_buffer::WlBuffer>,
-    texture: T,
+pub struct PointerElement {
+    buffer: Option<MemoryRenderBuffer>,
+    status: CursorImageStatus,
 }
 
-impl<T> Drop for BufferTextures<T> {
-    fn drop(&mut self) {
-        if let Some(buffer) = self.buffer.take() {
-            buffer.release();
+impl Default for PointerElement {
+    fn default() -> Self {
+        Self {
+            buffer: Default::default(),
+            status: CursorImageStatus::default_named(),
         }
     }
 }
 
-pub fn draw_cursor<R, E, F, T>(
-    renderer: &mut R,
-    frame: &mut F,
-    surface: &wl_surface::WlSurface,
-    location: Point<i32, Logical>,
-    output_scale: f32,
-    log: &Logger,
-    output: Option<Rectangle<i32, Logical>>,
-    bbox: Option<Rectangle<i32, Logical>>,
-) -> Result<(), SwapBuffersError>
-where
-    R: Renderer<Error = E, TextureId = T, Frame = F> + ImportAll,
-    F: Frame<Error = E, TextureId = T>,
-    E: std::error::Error + Into<SwapBuffersError>,
-    T: Texture + 'static,
-{
-    let ret = with_states(surface, |states| {
-        Some(
-            states
-                .data_map
-                .get::<Mutex<CursorImageAttributes>>()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .hotspot,
-        )
-    })
-    .unwrap_or(None);
-    let delta = match ret {
-        Some(h) => h,
-        None => {
-            warn!(
-                log,
-                "Trying to display as a cursor a surface that does not have the CursorImage role."
-            );
-            (0, 0).into()
-        }
-    };
-    if bbox.is_none() {
-        draw_surface_tree(
-            renderer,
-            frame,
-            surface,
-            location - delta,
-            output_scale,
-            log,
-            output,
-            output,
-        )
-    } else {
-        draw_surface_tree(
-            renderer,
-            frame,
-            surface,
-            location - delta,
-            output_scale,
-            log,
-            output,
-            bbox,
-        )
+impl PointerElement {
+    pub fn set_status(&mut self, status: CursorImageStatus) {
+        self.status = status;
+    }
+
+    pub fn set_buffer(&mut self, buffer: MemoryRenderBuffer) {
+        self.buffer = Some(buffer);
     }
 }
 
-fn draw_surface_tree<R, E, F, T>(
-    renderer: &mut R,
-    frame: &mut F,
-    root: &wl_surface::WlSurface,
-    location: Point<i32, Logical>,
-    output_scale: f32,
-    log: &Logger,
-    output: Option<Rectangle<i32, Logical>>, // Literal hardware size
-    bbox: Option<Rectangle<i32, Logical>>,   // Bounding box that makes up the parent window
-) -> Result<(), SwapBuffersError>
-where
-    R: Renderer<Error = E, TextureId = T, Frame = F> + ImportAll,
-    F: Frame<Error = E, TextureId = T>,
-    E: std::error::Error + Into<SwapBuffersError>,
-    T: Texture + 'static,
-{
-    let mut result = Ok(());
-
-    with_surface_tree_upward(
-        root,
-        location,
-        |_surface, states, location| {
-            let mut location = *location;
-            // Pull a new buffer if available
-            if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>() {
-                let mut data = data.borrow_mut();
-                let attributes = states.cached_state.current::<SurfaceAttributes>();
-                if data.texture.is_none() {
-                    if let Some(buffer) = data.buffer.take() {
-                        let damage = attributes
-                            .damage
-                            .iter()
-                            .map(|dmg| match dmg {
-                                Damage::Buffer(rect) => *rect,
-                                // TODO also apply transformations
-                                Damage::Surface(rect) => rect.to_buffer(attributes.buffer_scale),
-                            })
-                            .collect::<Vec<_>>();
-
-                        match renderer.import_buffer(&buffer, Some(states), &damage) {
-                            Some(Ok(m)) => {
-                                let texture_buffer =
-                                    if let Some(BufferType::Shm) = buffer_type(&buffer) {
-                                        buffer.release();
-                                        None
-                                    } else {
-                                        Some(buffer)
-                                    };
-                                data.texture = Some(Box::new(BufferTextures {
-                                    buffer: texture_buffer,
-                                    texture: m,
-                                }))
-                            }
-                            Some(Err(err)) => {
-                                warn!(log, "Error loading buffer: {:?}", err);
-                                buffer.release();
-                            }
-                            None => {
-                                error!(log, "Unknown buffer format for: {:?}", buffer);
-                                buffer.release();
-                            }
-                        }
-                    }
-                }
-                // Now, should we be drawn ?
-                if data.texture.is_some() {
-                    // if yes, also process the children
-                    if states.role == Some("subsurface") {
-                        let current = states.cached_state.current::<SubsurfaceCachedState>();
-                        location += current.location;
-                    }
-                    TraversalAction::DoChildren(location)
-                } else {
-                    // we are not displayed, so our children are neither
-                    TraversalAction::SkipChildren
-                }
-            } else {
-                // we are not displayed, so our children are neither
-                TraversalAction::SkipChildren
-            }
-        },
-        |_surface, states, location| {
-            let mut location = *location;
-            if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>() {
-                let mut data = data.borrow_mut();
-                let buffer_scale = data.buffer_scale;
-                let dim = data.buffer_dimensions.unwrap_or((1, 1).into());
-                if let Some(texture) = data
-                    .texture
-                    .as_mut()
-                    .and_then(|x| x.downcast_mut::<BufferTextures<T>>())
-                {
-                    // we need to re-extract the subsurface offset, as the previous closure
-                    // only passes it to our children
-                    if states.role == Some("subsurface") {
-                        let current = states.cached_state.current::<SubsurfaceCachedState>();
-                        location += current.location;
-                    }
-                    if let Some(output_rect) = output {
-                        // Scale up based on bbox of parent window
-                        let bbox = bbox.unwrap();
-                        let screen_aspect = output_rect.size.w as f64 / output_rect.size.h as f64;
-                        let window_aspect = bbox.size.w as f64 / bbox.size.h as f64;
-                        let mut screen_offset_x = 0f64;
-                        let mut screen_offset_y = 0f64;
-                        let mut scale = 1f64;
-                        if screen_aspect == window_aspect {
-                            scale = output_rect.size.w as f64 / bbox.size.w as f64;
-                        } else if screen_aspect < window_aspect {
-                            scale = output_rect.size.w as f64 / bbox.size.w as f64;
-                        } else if screen_aspect > window_aspect {
-                            scale = output_rect.size.h as f64 / bbox.size.h as f64;
-                        }
-                        let our_left = output_rect.loc.x as f64
-                            + (location.x as f64 - bbox.loc.x as f64) * scale;
-                        let our_top = output_rect.loc.y as f64
-                            + (location.y as f64 - bbox.loc.y as f64) * scale;
-                        let our_width = dim.w as f64 * scale;
-                        let our_height = dim.h as f64 * scale;
-                        let window_width = bbox.size.w as f64 * scale;
-                        let window_height = bbox.size.h as f64 * scale;
-
-                        if screen_aspect < window_aspect {
-                            screen_offset_y = (output_rect.size.h as f64 - window_height) / 2f64;
-                        } else {
-                            screen_offset_x = (output_rect.size.w as f64 - window_width) / 2f64;
-                        }
-
-                        if let Err(err) = frame.render_texture_from_to(
-                            &texture.texture,
-                            Rectangle::from_loc_and_size((0, 0), (dim.w, dim.h)), // use the whole texture
-                            Rectangle::from_loc_and_size(
-                                (screen_offset_x + our_left, screen_offset_y + our_top),
-                                (our_width, our_height),
-                            ),
-                            Transform::Normal, /* TODO */
-                            1.0,
-                        ) {
-                            result = Err(err.into());
-                        }
-                    } else {
-                        // Draw is pixel-in for pixel-out
-                        if let Err(err) = frame.render_texture_at(
-                            &texture.texture,
-                            location
-                                .to_f64()
-                                .to_physical(output_scale as f64)
-                                .to_i32_round(),
-                            buffer_scale,
-                            output_scale as f64,
-                            Transform::Normal, /* TODO */
-                            1.0,
-                        ) {
-                            result = Err(err.into());
-                        }
-                    }
-                }
-            }
-        },
-        |_, _, _| true,
-    );
-
-    result
+render_elements! {
+    pub PointerRenderElement<R> where R: ImportAll + ImportMem;
+    Surface=WaylandSurfaceRenderElement<R>,
+    Memory=MemoryRenderBufferRenderElement<R>,
 }
 
-pub fn draw_windows_menu<R, E, F, T>(
-    renderer: &mut R,
-    frame: &mut F,
-    window_map: &WindowMap,
-    output_rect: Rectangle<i32, Logical>,
-    output_scale: f32,
-    log: &::slog::Logger,
-    menu_selected: i32,
-    font_texture: &T,
-    menu_selected_texture: &T,
-) -> Result<(), SwapBuffersError>
+impl<R: Renderer> std::fmt::Debug for PointerRenderElement<R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Surface(arg0) => f.debug_tuple("Surface").field(arg0).finish(),
+            Self::Memory(arg0) => f.debug_tuple("Memory").field(arg0).finish(),
+            Self::_GenericCatcher(arg0) => f.debug_tuple("_GenericCatcher").field(arg0).finish(),
+        }
+    }
+}
+
+impl<T: Texture + Clone + Send + 'static, R> AsRenderElements<R> for PointerElement
 where
-    R: Renderer<Error = E, TextureId = T, Frame = F> + ImportAll,
-    F: Frame<Error = E, TextureId = T>,
-    E: std::error::Error + Into<SwapBuffersError>,
-    T: Texture + 'static,
+    R: Renderer<TextureId = T> + ImportAll + ImportMem,
 {
-    let mut result = Ok(());
-    let mut menu_pos = 0i32;
-    let mut menu_index = 0i32;
-    window_map.with_windows_from_top_to_bottom(
-        |toplevel_surface, mut initial_place, &bounding_box| {
-            if !output_rect.overlaps(bounding_box) {
-                return;
-            }
-            match toplevel_surface {
-                Kind::X11(xwindow) => {
-                    if xwindow.is_popup() {
-                        menu_index += 1;
-                        return;
-                    }
-                }
-                _ => {}
-            }
-            let output_rect_menu = Rectangle::from_loc_and_size((0i32, menu_pos), (200i32, 100i32));
-            initial_place.x -= output_rect.loc.x;
-            if let Some(wl_surface) = toplevel_surface.get_surface() {
-                if menu_index == menu_selected {
-                    frame
-                        .render_texture_from_to(
-                            menu_selected_texture,
-                            Rectangle::from_loc_and_size((0, 0), (100, 100)),
-                            Rectangle::from_loc_and_size(
-                                (0f64, menu_pos as f64),
-                                (output_rect.size.w as f64, 100f64),
-                            ),
-                            Transform::Normal,
-                            1.0,
+    type RenderElement = PointerRenderElement<R>;
+    fn render_elements<E>(
+        &self,
+        renderer: &mut R,
+        location: Point<i32, Physical>,
+        scale: Scale<f64>,
+        alpha: f32,
+    ) -> Vec<E>
+    where
+        E: From<PointerRenderElement<R>>,
+    {
+        match &self.status {
+            CursorImageStatus::Hidden => vec![],
+            // Always render `Default` for a named shape.
+            CursorImageStatus::Named(_) => {
+                if let Some(buffer) = self.buffer.as_ref() {
+                    vec![PointerRenderElement::<R>::from(
+                        MemoryRenderBufferRenderElement::from_buffer(
+                            renderer,
+                            location.to_f64(),
+                            buffer,
+                            None,
+                            None,
+                            None,
+                            Kind::Cursor,
                         )
-                        .unwrap();
-                }
-                // this surface is a root of a subsurface tree that needs to be drawn
-                if let Err(err) = draw_surface_tree(
-                    renderer,
-                    frame,
-                    wl_surface,
-                    initial_place,
-                    output_scale,
-                    log,
-                    Some(output_rect_menu),
-                    Some(bounding_box),
-                ) {
-                    result = Err(err);
-                }
-                // furthermore, draw its popups
-                let toplevel_geometry_offset = window_map
-                    .geometry(toplevel_surface)
-                    .map(|g| g.loc)
-                    .unwrap_or_default();
-
-                window_map.with_child_popups(wl_surface, |popup| {
-                    let location = popup.location();
-                    let draw_location = initial_place + location + toplevel_geometry_offset;
-                    if let Some(wl_surface) = popup.get_surface() {
-                        if let Err(err) = draw_surface_tree(
-                            renderer,
-                            frame,
-                            wl_surface,
-                            draw_location,
-                            output_scale,
-                            log,
-                            Some(output_rect_menu),
-                            Some(bounding_box),
-                        ) {
-                            result = Err(err);
-                        }
-                    }
-                });
-                let window_title = toplevel_surface
-                    .title()
-                    .unwrap_or("Untitled Window".to_string());
-                if let Err(_err) = draw_string(
-                    renderer,
-                    frame,
-                    font_texture,
-                    0.5f64,
-                    (220f64, menu_pos as f64 + 42f64).into(),
-                    window_title,
-                ) {
-                    return ();
+                        .expect("Lost system pointer buffer"),
+                    )
+                    .into()]
                 } else {
+                    vec![]
                 }
-                menu_pos += 100i32;
-                menu_index += 1;
             }
-        },
-    );
-    result
-}
-
-pub fn draw_windows<R, E, F, T>(
-    renderer: &mut R,
-    frame: &mut F,
-    window_map: &WindowMap,
-    output_rect: Rectangle<i32, Logical>,
-    output_scale: f32,
-    log: &::slog::Logger,
-) -> Result<(), SwapBuffersError>
-where
-    R: Renderer<Error = E, TextureId = T, Frame = F> + ImportAll,
-    F: Frame<Error = E, TextureId = T>,
-    E: std::error::Error + Into<SwapBuffersError>,
-    T: Texture + 'static,
-{
-    let mut result = Ok(());
-
-    let box_maybe = top_window_get_bbox(window_map);
-    if box_maybe.is_none() {
-        return result;
+            CursorImageStatus::Surface(surface) => {
+                let elements: Vec<PointerRenderElement<R>> =
+                    smithay::backend::renderer::element::surface::render_elements_from_surface_tree(
+                        renderer,
+                        surface,
+                        location,
+                        scale,
+                        alpha,
+                        Kind::Cursor,
+                    );
+                elements.into_iter().map(E::from).collect()
+            }
+        }
     }
-    let bounding_box = box_maybe.unwrap();
-    window_map.with_window_top(
-        |toplevel_surface, mut initial_place, &_bounding_box| {
-            if !output_rect.overlaps(bounding_box) {
-                return;
-            }
-
-            initial_place.x -= output_rect.loc.x;
-            if let Some(wl_surface) = toplevel_surface.get_surface() {
-                // this surface is a root of a subsurface tree that needs to be drawn
-                if let Err(err) = draw_surface_tree(
-                    renderer,
-                    frame,
-                    wl_surface,
-                    initial_place,
-                    output_scale,
-                    log,
-                    Some(output_rect),
-                    Some(bounding_box),
-                ) {
-                    result = Err(err);
-                }
-                // furthermore, draw its popups
-                let toplevel_geometry_offset = window_map
-                    .geometry(toplevel_surface)
-                    .map(|g| g.loc)
-                    .unwrap_or_default();
-                window_map.with_child_popups(wl_surface, |popup| {
-                    let location = popup.location();
-                    let draw_location = initial_place + location + toplevel_geometry_offset;
-                    if let Some(wl_surface) = popup.get_surface() {
-                        if let Err(err) = draw_surface_tree(
-                            renderer,
-                            frame,
-                            wl_surface,
-                            draw_location,
-                            output_scale,
-                            log,
-                            Some(output_rect),
-                            Some(bounding_box),
-                        ) {
-                            result = Err(err);
-                        }
-                    }
-                });
-            }
-        },
-        true,
-    );
-
-    result
-}
-
-pub fn draw_layers<R, E, F, T>(
-    renderer: &mut R,
-    frame: &mut F,
-    window_map: &WindowMap,
-    layer: Layer,
-    output_rect: Rectangle<i32, Logical>,
-    output_scale: f32,
-    log: &::slog::Logger,
-) -> Result<(), SwapBuffersError>
-where
-    R: Renderer<Error = E, TextureId = T, Frame = F> + ImportAll,
-    F: Frame<Error = E, TextureId = T>,
-    E: std::error::Error + Into<SwapBuffersError>,
-    T: Texture + 'static,
-{
-    let mut result = Ok(());
-
-    window_map
-        .layers
-        .with_layers_from_bottom_to_top(&layer, |layer_surface| {
-            // skip layers that do not overlap with a given output
-            if !output_rect.overlaps(layer_surface.bbox) {
-                return;
-            }
-
-            let mut initial_place: Point<i32, Logical> = layer_surface.location;
-            initial_place.x -= output_rect.loc.x;
-
-            if let Some(wl_surface) = layer_surface.surface.get_surface() {
-                // this surface is a root of a subsurface tree that needs to be drawn
-                if let Err(err) = draw_surface_tree(
-                    renderer,
-                    frame,
-                    wl_surface,
-                    initial_place,
-                    output_scale,
-                    log,
-                    Some(output_rect),
-                    Some(layer_surface.bbox),
-                ) {
-                    result = Err(err);
-                }
-
-                window_map.with_child_popups(wl_surface, |popup| {
-                    let location = popup.location();
-                    let draw_location = initial_place + location;
-                    if let Some(wl_surface) = popup.get_surface() {
-                        if let Err(err) = draw_surface_tree(
-                            renderer,
-                            frame,
-                            wl_surface,
-                            draw_location,
-                            output_scale,
-                            log,
-                            Some(output_rect),
-                            Some(layer_surface.bbox),
-                        ) {
-                            result = Err(err);
-                        }
-                    }
-                });
-            }
-        });
-    result
-}
-
-pub fn draw_dnd_icon<R, E, F, T>(
-    _renderer: &mut R,
-    _frame: &mut F,
-    surface: &wl_surface::WlSurface,
-    _location: Point<i32, Logical>,
-    _output_scale: f32,
-    log: &::slog::Logger,
-) -> Result<(), SwapBuffersError>
-where
-    R: Renderer<Error = E, TextureId = T, Frame = F> + ImportAll,
-    F: Frame<Error = E, TextureId = T>,
-    E: std::error::Error + Into<SwapBuffersError>,
-    T: Texture + 'static,
-{
-    if get_role(surface) != Some("dnd_icon") {
-        warn!(
-            log,
-            "Trying to display as a dnd icon a surface that does not have the DndIcon role."
-        );
-    }
-    //draw_surface_tree(renderer, frame, surface, location, output_scale, log, )
-    Ok(())
 }
 
 #[cfg(feature = "debug")]
 pub static FPS_NUMBERS_PNG: &[u8] = include_bytes!("../resources/numbers.png");
 
-pub static FONT_PNG: &[u8] = include_bytes!("../resources/font.png");
-
-pub static MENU_SELECTED_PNG: &[u8] = include_bytes!("../resources/menu_selected.png");
+#[cfg(feature = "debug")]
+#[derive(Debug, Clone)]
+pub struct FpsElement<T: Texture> {
+    id: Id,
+    value: u32,
+    texture: T,
+    commit_counter: CommitCounter,
+}
 
 #[cfg(feature = "debug")]
-pub fn draw_fps<R, E, F, T>(
-    _renderer: &mut R,
-    frame: &mut F,
-    texture: &T,
-    output_scale: f64,
-    value: u32,
-) -> Result<(), SwapBuffersError>
-where
-    R: Renderer<Error = E, TextureId = T, Frame = F> + ImportAll,
-    F: Frame<Error = E, TextureId = T>,
-    E: std::error::Error + Into<SwapBuffersError>,
-    T: Texture + 'static,
-{
-    let value_str = value.to_string();
-    let mut offset_x = 0f64;
-    for digit in value_str.chars().map(|d| d.to_digit(10).unwrap()) {
-        frame
-            .render_texture_from_to(
-                texture,
-                match digit {
-                    9 => Rectangle::from_loc_and_size((0, 0), (22, 35)),
-                    6 => Rectangle::from_loc_and_size((22, 0), (22, 35)),
-                    3 => Rectangle::from_loc_and_size((44, 0), (22, 35)),
-                    1 => Rectangle::from_loc_and_size((66, 0), (22, 35)),
-                    8 => Rectangle::from_loc_and_size((0, 35), (22, 35)),
-                    0 => Rectangle::from_loc_and_size((22, 35), (22, 35)),
-                    2 => Rectangle::from_loc_and_size((44, 35), (22, 35)),
-                    7 => Rectangle::from_loc_and_size((0, 70), (22, 35)),
-                    4 => Rectangle::from_loc_and_size((22, 70), (22, 35)),
-                    5 => Rectangle::from_loc_and_size((44, 70), (22, 35)),
-                    _ => unreachable!(),
-                },
-                Rectangle::from_loc_and_size(
-                    (offset_x, 0.0),
-                    (22.0 * output_scale, 35.0 * output_scale),
-                ),
-                Transform::Normal,
-                1.0,
-            )
-            .map_err(Into::into)?;
-        offset_x += 24.0 * output_scale;
+impl<T: Texture> FpsElement<T> {
+    pub fn new(texture: T) -> Self {
+        FpsElement {
+            id: Id::new(),
+            texture,
+            value: 0,
+            commit_counter: CommitCounter::default(),
+        }
     }
 
-    Ok(())
+    pub fn update_fps(&mut self, fps: u32) {
+        if self.value != fps {
+            self.value = fps;
+            self.commit_counter.increment();
+        }
+    }
 }
 
-pub fn draw_string<R, E, F, T>(
-    _renderer: &mut R,
-    frame: &mut F,
-    texture: &T,
-    output_scale: f64,
-    output_location: Point<f64, Logical>,
-    value: String,
-) -> Result<(), SwapBuffersError>
+#[cfg(feature = "debug")]
+impl<T> Element for FpsElement<T>
 where
-    R: Renderer<Error = E, TextureId = T, Frame = F> + ImportAll,
-    F: Frame<Error = E, TextureId = T>,
-    E: std::error::Error + Into<SwapBuffersError>,
     T: Texture + 'static,
 {
-    let mut offset_x = 0f64;
-    for letter in value.bytes() {
-        let y = (letter - 2) / 26u8;
-        let x = (letter - 2) % 26u8;
-        let rect = Rectangle::from_loc_and_size((x as i32 * 38 + 9, y as i32 * 38), (20i32, 38i32));
-        frame
-            .render_texture_from_to(
-                texture,
-                rect,
-                Rectangle::from_loc_and_size(
-                    (offset_x + output_location.x, output_location.y),
-                    (20.0 * output_scale, 38.0 * output_scale),
-                ),
-                Transform::Normal,
-                1.0,
-            )
-            .map_err(Into::into)?;
-        offset_x += 20.0 * output_scale;
+    fn id(&self) -> &Id {
+        &self.id
     }
 
-    Ok(())
+    fn location(&self, _scale: Scale<f64>) -> Point<i32, Physical> {
+        (0, 0).into()
+    }
+
+    fn src(&self) -> Rectangle<f64, Buffer> {
+        let digits = if self.value < 10 {
+            1
+        } else if self.value < 100 {
+            2
+        } else {
+            3
+        };
+        Rectangle::from_loc_and_size((0, 0), (24 * digits, 35)).to_f64()
+    }
+
+    fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
+        let digits = if self.value < 10 {
+            1
+        } else if self.value < 100 {
+            2
+        } else {
+            3
+        };
+        Rectangle::from_loc_and_size((0, 0), (24 * digits, 35)).to_physical_precise_round(scale)
+    }
+
+    fn current_commit(&self) -> CommitCounter {
+        self.commit_counter
+    }
 }
 
-pub fn string_rusttype_size() -> Rectangle<i32, Logical> {
-    Rectangle::from_loc_and_size((0, 0), (1, 1)) // TODO
-}
-
-pub fn draw_string_rusttype(
-    renderer: &mut Gles2Renderer,
-    _font: &Font<'static>,
-    _frame: &mut dyn Frame<Error = Gles2Error, TextureId = Gles2Texture>,
-    _texture: Gles2Texture,
-    _output_location: Point<f64, Logical>,
-    _value: String,
-) -> Result<(), Gles2Error>
+#[cfg(feature = "debug")]
+impl<R> RenderElement<R> for FpsElement<<R as Renderer>::TextureId>
 where
+    R: Renderer + ImportAll,
+    <R as Renderer>::TextureId: 'static,
 {
-    use smithay::backend::renderer::gles2::ffi;
-    renderer.with_context(|_renderer, gl| unsafe {
-        gl.BindTexture(ffi::TEXTURE_2D, 0);
+    fn draw(
+        &self,
+        frame: &mut <R as Renderer>::Frame<'_>,
+        _src: Rectangle<f64, Buffer>,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+        _opaque_regions: &[Rectangle<i32, Physical>],
+    ) -> Result<(), R::Error> {
+        // FIXME: respect the src for cropping
+        let scale = dst.size.to_f64() / self.src().size;
+        let value_str = std::cmp::min(self.value, 999).to_string();
+        let mut offset: Point<f64, Physical> = Point::from((0.0, 0.0));
+        for digit in value_str.chars().map(|d| d.to_digit(10).unwrap()) {
+            let digit_location = dst.loc.to_f64() + offset;
+            let digit_size = Size::<i32, Logical>::from((22, 35))
+                .to_f64()
+                .to_physical(scale);
+            let dst = Rectangle::from_loc_and_size(
+                digit_location.to_i32_round(),
+                ((digit_size.to_point() + digit_location).to_i32_round()
+                    - digit_location.to_i32_round())
+                .to_size(),
+            );
+            let damage = damage
+                .iter()
+                .cloned()
+                .flat_map(|x| x.intersection(dst))
+                .map(|mut x| {
+                    x.loc -= dst.loc;
+                    x
+                })
+                .collect::<Vec<_>>();
+            let texture_src: Rectangle<i32, Buffer> = match digit {
+                9 => Rectangle::from_loc_and_size((0, 0), (22, 35)),
+                6 => Rectangle::from_loc_and_size((22, 0), (22, 35)),
+                3 => Rectangle::from_loc_and_size((44, 0), (22, 35)),
+                1 => Rectangle::from_loc_and_size((66, 0), (22, 35)),
+                8 => Rectangle::from_loc_and_size((0, 35), (22, 35)),
+                0 => Rectangle::from_loc_and_size((22, 35), (22, 35)),
+                2 => Rectangle::from_loc_and_size((44, 35), (22, 35)),
+                7 => Rectangle::from_loc_and_size((0, 70), (22, 35)),
+                4 => Rectangle::from_loc_and_size((22, 70), (22, 35)),
+                5 => Rectangle::from_loc_and_size((44, 70), (22, 35)),
+                _ => unreachable!(),
+            };
 
-        // TODO
-    })
-}
+            frame.render_texture_from_to(
+                &self.texture,
+                texture_src.to_f64(),
+                dst,
+                &damage,
+                &[],
+                Transform::Normal,
+                1.0,
+            )?;
+            offset += Point::from((24.0, 0.0)).to_physical(scale);
+        }
 
-pub fn import_bitmap<C: std::ops::Deref<Target = [u8]>>(
-    renderer: &mut Gles2Renderer,
-    image: &ImageBuffer<Rgba<u8>, C>,
-) -> Result<Gles2Texture, Gles2Error> {
-    use smithay::backend::renderer::gles2::ffi;
-
-    renderer.with_context(|renderer, gl| unsafe {
-        let mut tex = 0;
-        gl.GenTextures(1, &mut tex);
-        gl.BindTexture(ffi::TEXTURE_2D, tex);
-        gl.TexParameteri(
-            ffi::TEXTURE_2D,
-            ffi::TEXTURE_WRAP_S,
-            ffi::CLAMP_TO_EDGE as i32,
-        );
-        gl.TexParameteri(
-            ffi::TEXTURE_2D,
-            ffi::TEXTURE_WRAP_T,
-            ffi::CLAMP_TO_EDGE as i32,
-        );
-        gl.TexImage2D(
-            ffi::TEXTURE_2D,
-            0,
-            ffi::RGBA as i32,
-            image.width() as i32,
-            image.height() as i32,
-            0,
-            ffi::RGBA,
-            ffi::UNSIGNED_BYTE as u32,
-            image.as_ptr() as *const _,
-        );
-        gl.BindTexture(ffi::TEXTURE_2D, 0);
-
-        Gles2Texture::from_raw(
-            renderer,
-            tex,
-            (image.width() as i32, image.height() as i32).into(),
-        )
-    })
+        Ok(())
+    }
 }

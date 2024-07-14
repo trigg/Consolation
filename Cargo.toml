@@ -1,29 +1,31 @@
 [package]
 name = "consolation"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
 smithay = { git = "https://github.com/Smithay/smithay.git" }
-bitflags = "1.2.1"
-input = { version = "0.6.0", features = ["udev"], optional = true }
+smithay-drm-extras = { git = "https://github.com/Smithay/smithay.git", optional=true }
+bitflags = "2.2.1"
+fps_ticker = {version="1.0.0", optional=true}
 thiserror = "1"
-xcursor = { version = "0.3.3", optional = true }
 image = { version = "0.23.14", optional = true }
-fps_ticker = { version = "1.0.0", optional = true }
+tracing = { version = "0.1.37", features = ["max_level_trace", "release_max_level_debug"] }
+tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 rand = "0.8"
-slog = { version = "2.1.1" }
-slog-term = "2.8"
-slog-async = "2.2"
-slog-stdlog = "4.1.0"
-slog-scope = "4.4.0"
-xkbcommon = "0.4.0"
 rusttype = "0.9.2"
+xcursor = {version = "0.3.3", optional = true}
+xkbcommon = "0.7.0"
+renderdoc = {version = "0.11.0", optional = true}
+puffin_http = { version = "0.13", optional = true }
+profiling = { version = "1.0" }
+is_executable = { version ="1.0.1"}
+xdg={version="2.5.2"}
 
 [dependencies.x11rb]
 optional = true
-version = "0.9.0"
+version = "0.13.0"
 default-features = false
 features = [ "composite" ]
 
@@ -31,14 +33,25 @@ features = [ "composite" ]
 gl_generator = "0.14"
 
 [features]
-default = [ "winit", "udev", "logind", "egl", "xwayland", "image/png"]
+debug = [ "fps_ticker", "image/png", "renderdoc" ]
+default = [ "winit", "udev", "egl", "xwayland", "image/png"]
 egl = [ "smithay/use_system_lib", "smithay/backend_egl" ]
-winit = [ "smithay/backend_winit" ]
-udev = [ "smithay/backend_libinput", "smithay/backend_udev", "smithay/backend_drm", "smithay/backend_gbm", "smithay/backend_egl", "smithay/backend_session", "input", "image", "smithay/renderer_gl","xcursor" ]
-logind = [ "smithay/backend_session_logind" ]
-elogind = ["logind", "smithay/backend_session_elogind" ]
-libseat = ["smithay/backend_session_libseat" ]
-xwayland = [ "smithay/xwayland", "x11rb", "smithay/x11rb_event_source" ]
+udev = [
+  "smithay-drm-extras",
+  "smithay/backend_libinput",
+  "smithay/backend_udev",
+  "smithay/backend_drm",
+  "smithay/backend_gbm",
+  "smithay/backend_vulkan",
+  "smithay/backend_egl",
+  "smithay/backend_session_libseat",
+  "image",
+  "smithay/renderer_gl",
+  "smithay/renderer_pixman",
+  "smithay/renderer_multi",
+  "xcursor"
+  ]
+winit = ["smithay/backend_winit", "smithay/backend_drm"]
+xwayland = [ "smithay/xwayland", "x11rb", "smithay/x11rb_event_source", "xcursor" ]
 x11 = [ "smithay/backend_x11", "x11rb", "egl", "smithay/renderer_gl" ]
-debug = [ "fps_ticker",  ]
 test_all_features = ["default", "debug"]
