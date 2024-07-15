@@ -2,10 +2,8 @@ use std::{cell::RefCell, os::unix::io::OwnedFd};
 
 use smithay::{
     desktop::{space::SpaceElement, Window},
-    input::pointer::Focus,
-    utils::{Logical, Rectangle, SERIAL_COUNTER},
+    utils::{Logical, Rectangle},
     wayland::{
-        compositor::with_states,
         selection::{
             data_device::{
                 clear_data_device_selection, current_data_device_selection_userdata,
@@ -28,10 +26,7 @@ use tracing::{error, trace};
 
 use crate::{focus::KeyboardFocusTarget, state::Backend, AnvilState};
 
-use super::{
-    place_new_window, FullscreenSurface, PointerMoveSurfaceGrab, PointerResizeSurfaceGrab, ResizeData,
-    ResizeState, SurfaceData, TouchMoveSurfaceGrab, WindowElement,
-};
+use super::{fullscreen_output_geometry, place_new_window};
 
 #[derive(Debug, Default)]
 struct OldGeometry(RefCell<Option<Rectangle<i32, Logical>>>);
@@ -61,30 +56,34 @@ impl<BackendData: Backend> XwmHandler for AnvilState<BackendData> {
 
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
         window.set_mapped(true).unwrap();
-        let window = WindowElement(Window::new_x11_window(window));
-        place_new_window(&mut self.space, self.pointer.current_location(), &window, true);
-        let bbox = self.space.element_bbox(&window).unwrap();
-        let Some(xsurface) = window.0.x11_surface() else {
+        let window = Window::new_x11_window(window);
+        place_new_window(
+            &mut self.elements,
+            self.pointer.current_location(),
+            &window,
+            true,
+        );
+        let bbox = window.bbox();
+        let Some(xsurface) = window.x11_surface() else {
             unreachable!()
         };
         xsurface.configure(Some(bbox)).unwrap();
-        window.set_ssd(!xsurface.is_decorated());
+        //window.set_ssd(!xsurface.is_decorated());
     }
 
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
-        let location = window.geometry().loc;
-        let window = WindowElement(Window::new_x11_window(window));
-        self.space.map_element(window, location, true);
+        let window = Window::new_x11_window(window);
+        self.raise_window(&window);
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
         let maybe = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
+            .elements
+            .iter()
+            .find(|e| matches!(e.x11_surface(), Some(w) if w == &window))
             .cloned();
         if let Some(elem) = maybe {
-            self.space.unmap_elem(&elem)
+            self.unmap_window(&elem)
         }
         if !window.is_override_redirect() {
             window.set_mapped(false).unwrap();
@@ -118,20 +117,18 @@ impl<BackendData: Backend> XwmHandler for AnvilState<BackendData> {
         &mut self,
         _xwm: XwmId,
         window: X11Surface,
-        geometry: Rectangle<i32, Logical>,
+        _geometry: Rectangle<i32, Logical>,
         _above: Option<u32>,
     ) {
         let Some(elem) = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
+            .elements
+            .iter()
+            .find(|e| matches!(e.x11_surface(), Some(w) if w == &window))
             .cloned()
         else {
             return;
         };
-        self.space.map_element(elem, geometry.loc, false);
-        // TODO: We don't properly handle the order of override-redirect windows here,
-        //       they are always mapped top and then never reordered.
+        self.map_window(&elem);
     }
 
     fn maximize_request(&mut self, _xwm: XwmId, window: X11Surface) {
@@ -140,9 +137,9 @@ impl<BackendData: Backend> XwmHandler for AnvilState<BackendData> {
 
     fn unmaximize_request(&mut self, _xwm: XwmId, window: X11Surface) {
         let Some(elem) = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
+            .elements
+            .iter()
+            .find(|e| matches!(e.x11_surface(), Some(w) if w == &window))
             .cloned()
         else {
             return;
@@ -155,69 +152,69 @@ impl<BackendData: Backend> XwmHandler for AnvilState<BackendData> {
             .and_then(|data| data.restore())
         {
             window.configure(old_geo).unwrap();
-            self.space.map_element(elem, old_geo.loc, false);
+            self.map_window(&elem);
         }
     }
 
     fn fullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        let mut saved_elem = None;
         if let Some(elem) = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
+            .elements
+            .iter()
+            .find(|e| matches!(e.x11_surface(), Some(w) if w == &window))
         {
-            let outputs_for_window = self.space.outputs_for_element(elem);
-            let output = outputs_for_window
-                .first()
-                // The window hasn't been mapped yet, use the primary output instead
-                .or_else(|| self.space.outputs().next())
-                // Assumes that at least one output exists
-                .expect("No outputs found");
-            let geometry = self.space.output_geometry(output).unwrap();
+            saved_elem = Some(elem.clone());
+        }
+        if let Some(elem) = saved_elem {
+            let old_geo = elem.bbox();
 
+            let geometry = fullscreen_output_geometry(&self.outputs);
             window.set_fullscreen(true).unwrap();
-            elem.set_ssd(false);
             window.configure(geometry).unwrap();
-            output.user_data().insert_if_missing(FullscreenSurface::default);
-            output
+
+            window.user_data().insert_if_missing(OldGeometry::default);
+            window
                 .user_data()
-                .get::<FullscreenSurface>()
+                .get::<OldGeometry>()
                 .unwrap()
-                .set(elem.clone());
-            trace!("Fullscreening: {:?}", elem);
+                .save(old_geo);
+            self.map_window(&elem);
         }
     }
 
     fn unfullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
-        if let Some(elem) = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
+        if let Some(_lem) = self
+            .elements
+            .iter()
+            .find(|e| matches!(e.x11_surface(), Some(w) if w == &window))
         {
-            window.set_fullscreen(false).unwrap();
-            elem.set_ssd(!window.is_decorated());
-            if let Some(output) = self.space.outputs().find(|o| {
-                o.user_data()
-                    .get::<FullscreenSurface>()
-                    .and_then(|f| f.get())
-                    .map(|w| &w == elem)
-                    .unwrap_or(false)
-            }) {
-                trace!("Unfullscreening: {:?}", elem);
-                output.user_data().get::<FullscreenSurface>().unwrap().clear();
-                window.configure(self.space.element_bbox(elem)).unwrap();
-                self.backend_data.reset_buffers(output);
+            let _attempt_fs = window.set_fullscreen(false);
+
+            if let Some(old_geo) = window
+                .user_data()
+                .get::<OldGeometry>()
+                .and_then(|data| data.restore())
+            {
+                window.configure(old_geo).unwrap();
             }
         }
     }
 
-    fn resize_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32, edges: X11ResizeEdge) {
+    fn resize_request(
+        &mut self,
+        _xwm: XwmId,
+        _window: X11Surface,
+        _button: u32,
+        _edges: X11ResizeEdge,
+    ) {
+        // No thank you
         // luckily anvil only supports one seat anyway...
-        let start_data = self.pointer.grab_start_data().unwrap();
+        /*let start_data = self.pointer.grab_start_data().unwrap();
 
         let Some(element) = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == &window))
+            .elements
+            .iter()
+            .find(|e| matches!(e.x11_surface(), Some(w) if w == &window))
         else {
             return;
         };
@@ -249,7 +246,7 @@ impl<BackendData: Backend> XwmHandler for AnvilState<BackendData> {
         };
 
         let pointer = self.pointer.clone();
-        pointer.set_grab(self, grab, SERIAL_COUNTER.next_serial(), Focus::Clear);
+        pointer.set_grab(self, grab, SERIAL_COUNTER.next_serial(), Focus::Clear);*/
     }
 
     fn move_request(&mut self, _xwm: XwmId, window: X11Surface, _button: u32) {
@@ -270,11 +267,20 @@ impl<BackendData: Backend> XwmHandler for AnvilState<BackendData> {
         false
     }
 
-    fn send_selection(&mut self, _xwm: XwmId, selection: SelectionTarget, mime_type: String, fd: OwnedFd) {
+    fn send_selection(
+        &mut self,
+        _xwm: XwmId,
+        selection: SelectionTarget,
+        mime_type: String,
+        fd: OwnedFd,
+    ) {
         match selection {
             SelectionTarget::Clipboard => {
                 if let Err(err) = request_data_device_client_selection(&self.seat, mime_type, fd) {
-                    error!(?err, "Failed to request current wayland clipboard for Xwayland",);
+                    error!(
+                        ?err,
+                        "Failed to request current wayland clipboard for Xwayland",
+                    );
                 }
             }
             SelectionTarget::Primary => {
@@ -320,32 +326,31 @@ impl<BackendData: Backend> XwmHandler for AnvilState<BackendData> {
 impl<BackendData: Backend> AnvilState<BackendData> {
     pub fn maximize_request_x11(&mut self, window: &X11Surface) {
         let Some(elem) = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == window))
+            .elements
+            .iter()
+            .find(|e| matches!(e.x11_surface(), Some(w) if w == window))
             .cloned()
         else {
             return;
         };
 
-        let old_geo = self.space.element_bbox(&elem).unwrap();
-        let outputs_for_window = self.space.outputs_for_element(&elem);
-        let output = outputs_for_window
-            .first()
-            // The window hasn't been mapped yet, use the primary output instead
-            .or_else(|| self.space.outputs().next())
-            // Assumes that at least one output exists
-            .expect("No outputs found");
-        let geometry = self.space.output_geometry(output).unwrap();
+        let old_geo = window.bbox();
 
+        let geometry = fullscreen_output_geometry(&self.outputs);
         window.set_maximized(true).unwrap();
         window.configure(geometry).unwrap();
+
         window.user_data().insert_if_missing(OldGeometry::default);
-        window.user_data().get::<OldGeometry>().unwrap().save(old_geo);
-        self.space.map_element(elem, geometry.loc, false);
+        window
+            .user_data()
+            .get::<OldGeometry>()
+            .unwrap()
+            .save(old_geo);
+        self.map_window(&elem);
     }
 
-    pub fn move_request_x11(&mut self, window: &X11Surface) {
+    pub fn move_request_x11(&mut self, _window: &X11Surface) {
+        /*
         if let Some(touch) = self.seat.get_touch() {
             if let Some(start_data) = touch.grab_start_data() {
                 let element = self
@@ -386,6 +391,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
                 }
             }
         }
+
 
         // luckily anvil only supports one seat anyway...
         let Some(start_data) = self.pointer.grab_start_data() else {
@@ -429,5 +435,6 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 
         let pointer = self.pointer.clone();
         pointer.set_grab(self, grab, SERIAL_COUNTER.next_serial(), Focus::Clear);
+        */
     }
 }

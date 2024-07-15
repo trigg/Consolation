@@ -5,8 +5,7 @@ use smithay::xwayland::XWaylandClientData;
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
     desktop::{
-        layer_map_for_output, space::SpaceElement, LayerSurface, PopupKind, PopupManager, Space,
-        WindowSurfaceType,
+        layer_map_for_output, LayerSurface, PopupKind, PopupManager, Window, WindowSurfaceType,
     },
     output::Output,
     reexports::{
@@ -16,7 +15,7 @@ use smithay::{
             Client, Resource,
         },
     },
-    utils::{IsAlive, Logical, Point, Rectangle, Size},
+    utils::{IsAlive, Logical, Point, Rectangle},
     wayland::{
         buffer::BufferHandler,
         compositor::{
@@ -25,6 +24,7 @@ use smithay::{
             CompositorState, SurfaceAttributes, TraversalAction,
         },
         dmabuf::get_dmabuf,
+        seat::WaylandFocus,
         shell::{
             wlr_layer::{
                 Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler,
@@ -41,35 +41,20 @@ use crate::{
 };
 
 mod element;
-mod grabs;
 pub(crate) mod ssd;
 #[cfg(feature = "xwayland")]
 mod x11;
 mod xdg;
 
 pub use self::element::*;
-pub use self::grabs::*;
 
-fn fullscreen_output_geometry(
-    wl_surface: &WlSurface,
-    wl_output: Option<&wl_output::WlOutput>,
-    space: &mut Space<WindowElement>,
-) -> Option<Rectangle<i32, Logical>> {
-    // First test if a specific output has been requested
-    // if the requested output is not found ignore the request
-    wl_output
-        .and_then(Output::from_resource)
-        .or_else(|| {
-            let w = space.elements().find(|window| {
-                window
-                    .wl_surface()
-                    .map(|s| &*s == wl_surface)
-                    .unwrap_or(false)
-            });
-            w.and_then(|w| space.outputs_for_element(w).first().cloned())
-        })
-        .as_ref()
-        .and_then(|o| space.output_geometry(o))
+fn fullscreen_output_geometry(outputs: &Vec<Output>) -> Option<Rectangle<i32, Logical>> {
+    let output = outputs.last().expect("No output while fullscreening");
+    let geometry = output.current_mode().unwrap();
+    Some(Rectangle {
+        loc: Default::default(),
+        size: geometry.size.to_logical(1),
+    })
 }
 
 #[derive(Default)]
@@ -154,12 +139,12 @@ impl<BackendData: Backend> CompositorHandler for AnvilState<BackendData> {
                 root = parent;
             }
             if let Some(window) = self.window_for_surface(&root) {
-                window.0.on_commit();
+                window.on_commit();
             }
         }
         self.popups.commit(surface);
 
-        ensure_initial_configure(surface, &self.space, &mut self.popups)
+        ensure_initial_configure(surface, &self.elements, &self.outputs, &mut self.popups)
     }
 }
 
@@ -178,14 +163,14 @@ impl<BackendData: Backend> WlrLayerShellHandler for AnvilState<BackendData> {
         let output = wl_output
             .as_ref()
             .and_then(Output::from_resource)
-            .unwrap_or_else(|| self.space.outputs().next().unwrap().clone());
+            .unwrap_or_else(|| self.outputs.iter().next().unwrap().clone());
         let mut map = layer_map_for_output(&output);
         map.map_layer(&LayerSurface::new(surface, namespace))
             .unwrap();
     }
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
-        if let Some((mut map, layer)) = self.space.outputs().find_map(|o| {
+        if let Some((mut map, layer)) = self.outputs.iter().find_map(|o| {
             let map = layer_map_for_output(o);
             let layer = map
                 .layers()
@@ -199,9 +184,9 @@ impl<BackendData: Backend> WlrLayerShellHandler for AnvilState<BackendData> {
 }
 
 impl<BackendData: Backend> AnvilState<BackendData> {
-    pub fn window_for_surface(&self, surface: &WlSurface) -> Option<WindowElement> {
-        self.space
-            .elements()
+    pub fn window_for_surface(&self, surface: &WlSurface) -> Option<Window> {
+        self.elements
+            .iter()
             .find(|window| window.wl_surface().map(|s| &*s == surface).unwrap_or(false))
             .cloned()
     }
@@ -210,12 +195,12 @@ impl<BackendData: Backend> AnvilState<BackendData> {
 #[derive(Default)]
 pub struct SurfaceData {
     pub geometry: Option<Rectangle<i32, Logical>>,
-    pub resize_state: ResizeState,
 }
 
 fn ensure_initial_configure(
     surface: &WlSurface,
-    space: &Space<WindowElement>,
+    elements: &Vec<Window>,
+    outputs: &Vec<Output>,
     popups: &mut PopupManager,
 ) {
     with_surface_tree_upward(
@@ -230,14 +215,14 @@ fn ensure_initial_configure(
         |_, _, _| true,
     );
 
-    if let Some(window) = space
-        .elements()
+    if let Some(window) = elements
+        .iter()
         .find(|window| window.wl_surface().map(|s| &*s == surface).unwrap_or(false))
         .cloned()
     {
         // send the initial configure if relevant
         #[cfg_attr(not(feature = "xwayland"), allow(irrefutable_let_patterns))]
-        if let Some(toplevel) = window.0.toplevel() {
+        if let Some(toplevel) = window.toplevel() {
             let initial_configure_sent = with_states(surface, |states| {
                 states
                     .data_map
@@ -251,19 +236,6 @@ fn ensure_initial_configure(
                 toplevel.send_configure();
             }
         }
-
-        with_states(surface, |states| {
-            let mut data = states
-                .data_map
-                .get::<RefCell<SurfaceData>>()
-                .unwrap()
-                .borrow_mut();
-
-            // Finish resizing.
-            if let ResizeState::WaitingForCommit(_) = data.resize_state {
-                data.resize_state = ResizeState::NotResizing;
-            }
-        });
 
         return;
     }
@@ -295,7 +267,7 @@ fn ensure_initial_configure(
         return;
     };
 
-    if let Some(output) = space.outputs().find(|o| {
+    if let Some(output) = outputs.iter().find(|o| {
         let map = layer_map_for_output(o);
         map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
             .is_some()
@@ -327,53 +299,12 @@ fn ensure_initial_configure(
 }
 
 fn place_new_window(
-    space: &mut Space<WindowElement>,
+    elements: &mut Vec<Window>,
     _pointer_location: Point<f64, Logical>,
-    window: &WindowElement,
-    activate: bool,
+    window: &Window,
+    _activate: bool,
 ) {
-    let x = 0;
-    let y = 0;
+    elements.insert(0, window.clone());
 
-    space.map_element(window.clone(), (x, y), activate);
-}
-
-pub fn fixup_positions(space: &mut Space<WindowElement>, pointer_location: Point<f64, Logical>) {
-    // fixup outputs
-    let mut offset = Point::<i32, Logical>::from((0, 0));
-    for output in space.outputs().cloned().collect::<Vec<_>>().into_iter() {
-        let size = space
-            .output_geometry(&output)
-            .map(|geo| geo.size)
-            .unwrap_or_else(|| Size::from((0, 0)));
-        space.map_output(&output, offset);
-        layer_map_for_output(&output).arrange();
-        offset.x += size.w;
-    }
-
-    // fixup windows
-    let mut orphaned_windows = Vec::new();
-    let outputs = space
-        .outputs()
-        .flat_map(|o| {
-            let geo = space.output_geometry(o)?;
-            let map = layer_map_for_output(o);
-            let zone = map.non_exclusive_zone();
-            Some(Rectangle::from_loc_and_size(geo.loc + zone.loc, zone.size))
-        })
-        .collect::<Vec<_>>();
-    for window in space.elements() {
-        let window_location = match space.element_location(window) {
-            Some(loc) => loc,
-            None => continue,
-        };
-        let geo_loc = window.bbox().loc + window_location;
-
-        if !outputs.iter().any(|o_geo| o_geo.contains(geo_loc)) {
-            orphaned_windows.push(window.clone());
-        }
-    }
-    for window in orphaned_windows.into_iter() {
-        place_new_window(space, pointer_location, &window, false);
-    }
+    //space.map_element(window.clone(), (x, y), activate);
 }

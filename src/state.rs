@@ -22,12 +22,11 @@ use smithay::{
     delegate_viewporter, delegate_virtual_keyboard_manager, delegate_xdg_activation,
     delegate_xdg_decoration, delegate_xdg_shell,
     desktop::{
-        space::SpaceElement,
         utils::{
             surface_presentation_feedback_flags_from_states, surface_primary_scanout_output,
             update_surface_primary_scanout_output, OutputPresentationFeedback,
         },
-        PopupKind, PopupManager, Space,
+        PopupKind, PopupManager, Window,
     },
     input::{
         keyboard::{Keysym, LedState, XkbConfig},
@@ -49,7 +48,7 @@ use smithay::{
     },
     utils::{Clock, Monotonic, Rectangle},
     wayland::{
-        compositor::{get_parent, with_states, CompositorClientState, CompositorState},
+        compositor::{with_states, CompositorClientState, CompositorState},
         dmabuf::DmabufFeedback,
         fractional_scale::{
             with_fractional_scale, FractionalScaleHandler, FractionalScaleManagerState,
@@ -104,10 +103,7 @@ use smithay::{
 
 #[cfg(feature = "xwayland")]
 use crate::cursor::Cursor;
-use crate::{
-    focus::{KeyboardFocusTarget, PointerFocusTarget},
-    shell::WindowElement,
-};
+use crate::focus::{KeyboardFocusTarget, PointerFocusTarget};
 #[cfg(feature = "xwayland")]
 use smithay::{
     delegate_xwayland_keyboard_grab, delegate_xwayland_shell,
@@ -139,7 +135,8 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     pub handle: LoopHandle<'static, AnvilState<BackendData>>,
 
     // desktop
-    pub space: Space<WindowElement>,
+    pub outputs: Vec<Output>,
+    pub elements: Vec<Window>,
     pub popups: PopupManager,
 
     // smithay state
@@ -179,8 +176,6 @@ pub struct AnvilState<BackendData: Backend + 'static> {
 
     #[cfg(feature = "debug")]
     pub renderdoc: Option<renderdoc::RenderDoc<renderdoc::V141>>,
-
-    pub menu_window_selection: Option<usize>,
 }
 
 delegate_compositor!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
@@ -324,8 +319,8 @@ impl<BackendData: Backend> InputMethodHandler for AnvilState<BackendData> {
     }
 
     fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, smithay::utils::Logical> {
-        self.space
-            .elements()
+        self.elements
+            .iter()
             .find_map(|window| {
                 (window.wl_surface().as_deref() == Some(parent)).then(|| window.geometry())
             })
@@ -398,12 +393,12 @@ impl<BackendData: Backend> XdgActivationHandler for AnvilState<BackendData> {
         if token_data.timestamp.elapsed().as_secs() < 10 {
             // Just grant the wish
             let w = self
-                .space
-                .elements()
+                .elements
+                .iter()
                 .find(|window| window.wl_surface().map(|s| *s == surface).unwrap_or(false))
                 .cloned();
             if let Some(window) = w {
-                self.space.raise_element(&window, true);
+                self.raise_window(&window);
             }
         }
     }
@@ -469,7 +464,7 @@ delegate_presentation!(@<BackendData: Backend + 'static> AnvilState<BackendData>
 impl<BackendData: Backend> FractionalScaleHandler for AnvilState<BackendData> {
     fn new_fractional_scale(
         &mut self,
-        surface: smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+        _surface: smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
     ) {
         // Here we can set the initial fractional scale
         //
@@ -482,6 +477,7 @@ impl<BackendData: Backend> FractionalScaleHandler for AnvilState<BackendData> {
         // If all the above tests do not lead to a output we just use the first output
         // of the space (which in case of anvil will also be the output a toplevel will
         // initially be placed on)
+        /*
         #[allow(clippy::redundant_clone)]
         let mut root = surface.clone();
         while let Some(parent) = get_parent(&root) {
@@ -511,7 +507,7 @@ impl<BackendData: Backend> FractionalScaleHandler for AnvilState<BackendData> {
                     fractional_scale.set_preferred_scale(output.current_scale().fractional_scale());
                 });
             }
-        });
+        });*/
     }
 }
 delegate_fractional_scale!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
@@ -544,10 +540,10 @@ delegate_security_context!(@<BackendData: Backend + 'static> AnvilState<BackendD
 impl<BackendData: Backend + 'static> XWaylandKeyboardGrabHandler for AnvilState<BackendData> {
     fn keyboard_focus_for_xsurface(&self, surface: &WlSurface) -> Option<KeyboardFocusTarget> {
         let elem = self
-            .space
-            .elements()
+            .elements
+            .iter()
             .find(|elem| elem.wl_surface().as_deref() == Some(surface))?;
-        Some(KeyboardFocusTarget::Window(elem.0.clone()))
+        Some(KeyboardFocusTarget::Window(elem.clone()))
     }
 }
 #[cfg(feature = "xwayland")]
@@ -664,7 +660,8 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             socket_name,
             running: Arc::new(AtomicBool::new(true)),
             handle,
-            space: Space::default(),
+            elements: vec![],
+            outputs: vec![],
             popups: PopupManager::default(),
             compositor_state,
             data_device_state,
@@ -698,7 +695,6 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             xdisplay: None,
             #[cfg(feature = "debug")]
             renderdoc: renderdoc::RenderDoc::new().ok(),
-            menu_window_selection: None,
         }
     }
 
@@ -749,6 +745,28 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             );
         }
     }
+
+    pub fn unmap_window(&mut self, window: &Window) {
+        if let Some(index) = self.elements.iter().position(|w| w == window) {
+            self.elements.remove(index);
+        }
+    }
+
+    pub fn map_window(&mut self, window: &Window) {
+        self.unmap_window(window);
+        self.elements.insert(0, window.clone());
+    }
+
+    pub fn raise_window_number(&mut self, window: usize) {
+        let window = self.elements.remove(window);
+        self.elements.insert(0, window);
+    }
+
+    pub fn raise_window(&mut self, window: &Window) {
+        if let Some(windex) = self.elements.iter().position(|w| w == window) {
+            self.raise_window_number(windex);
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -761,14 +779,14 @@ pub struct SurfaceDmabufFeedback<'a> {
 pub fn post_repaint(
     output: &Output,
     render_element_states: &RenderElementStates,
-    space: &Space<WindowElement>,
+    elements: &Vec<Window>,
     dmabuf_feedback: Option<SurfaceDmabufFeedback<'_>>,
     time: impl Into<Duration>,
 ) {
     let time = time.into();
     let throttle = Some(Duration::from_secs(1));
 
-    space.elements().for_each(|window| {
+    elements.iter().for_each(|window| {
         window.with_surfaces(|surface, states| {
             let primary_scanout_output = update_surface_primary_scanout_output(
                 surface,
@@ -785,22 +803,16 @@ pub fn post_repaint(
             }
         });
 
-        if space.outputs_for_element(window).contains(output) {
-            window.send_frame(output, time, throttle, surface_primary_scanout_output);
-            if let Some(dmabuf_feedback) = dmabuf_feedback {
-                window.send_dmabuf_feedback(
-                    output,
-                    surface_primary_scanout_output,
-                    |surface, _| {
-                        select_dmabuf_feedback(
-                            surface,
-                            render_element_states,
-                            dmabuf_feedback.render_feedback,
-                            dmabuf_feedback.scanout_feedback,
-                        )
-                    },
-                );
-            }
+        window.send_frame(output, time, throttle, surface_primary_scanout_output);
+        if let Some(dmabuf_feedback) = dmabuf_feedback {
+            window.send_dmabuf_feedback(output, surface_primary_scanout_output, |surface, _| {
+                select_dmabuf_feedback(
+                    surface,
+                    render_element_states,
+                    dmabuf_feedback.render_feedback,
+                    dmabuf_feedback.scanout_feedback,
+                )
+            });
         }
     });
     let map = smithay::desktop::layer_map_for_output(output);
@@ -842,21 +854,19 @@ pub fn post_repaint(
 #[profiling::function]
 pub fn take_presentation_feedback(
     output: &Output,
-    space: &Space<WindowElement>,
+    elements: &Vec<Window>,
     render_element_states: &RenderElementStates,
 ) -> OutputPresentationFeedback {
     let mut output_presentation_feedback = OutputPresentationFeedback::new(output);
 
-    space.elements().for_each(|window| {
-        if space.outputs_for_element(window).contains(output) {
-            window.take_presentation_feedback(
-                &mut output_presentation_feedback,
-                surface_primary_scanout_output,
-                |surface, _| {
-                    surface_presentation_feedback_flags_from_states(surface, render_element_states)
-                },
-            );
-        }
+    elements.iter().for_each(|window| {
+        window.take_presentation_feedback(
+            &mut output_presentation_feedback,
+            surface_primary_scanout_output,
+            |surface, _| {
+                surface_presentation_feedback_flags_from_states(surface, render_element_states)
+            },
+        );
     });
     let map = smithay::desktop::layer_map_for_output(output);
     for layer_surface in map.layers() {

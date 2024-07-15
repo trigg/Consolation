@@ -1,15 +1,11 @@
 use std::cell::RefCell;
 
 use smithay::{
-    desktop::{
-        find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output,
-        space::SpaceElement, PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy,
-        Space, Window, WindowSurfaceType,
-    },
-    input::{pointer::Focus, Seat},
+    desktop::{PopupKind, Window},
+    input::Seat,
     output::Output,
     reexports::{
-        wayland_protocols::xdg::{decoration as xdg_decoration, shell::server::xdg_toplevel},
+        wayland_protocols::xdg::shell::server::xdg_toplevel,
         wayland_server::{
             protocol::{wl_output, wl_seat, wl_surface::WlSurface},
             Resource,
@@ -21,23 +17,15 @@ use smithay::{
         seat::WaylandFocus,
         shell::xdg::{
             Configure, PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler,
-            XdgShellState, XdgToplevelSurfaceData,
+            XdgShellState,
         },
     },
 };
 use tracing::{trace, warn};
 
-use crate::{
-    focus::KeyboardFocusTarget,
-    input_handler,
-    shell::{TouchMoveSurfaceGrab, TouchResizeSurfaceGrab},
-    state::{AnvilState, Backend},
-};
+use crate::state::{AnvilState, Backend};
 
-use super::{
-    fullscreen_output_geometry, place_new_window, FullscreenSurface, PointerMoveSurfaceGrab,
-    PointerResizeSurfaceGrab, ResizeData, ResizeEdge, ResizeState, SurfaceData, WindowElement,
-};
+use super::{fullscreen_output_geometry, place_new_window, FullscreenSurface, SurfaceData};
 
 impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
@@ -48,16 +36,16 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
         // Do not send a configure here, the initial configure
         // of a xdg_surface has to be sent during the commit if
         // the surface is not already configured
-        let window = WindowElement(Window::new_wayland_window(surface.clone()));
+        let window = Window::new_wayland_window(surface.clone());
         place_new_window(
-            &mut self.space,
+            &mut self.elements,
             self.pointer.current_location(),
             &window,
             true,
         );
 
         compositor::add_post_commit_hook(surface.wl_surface(), |state: &mut Self, _, surface| {
-            handle_toplevel_commit(&mut state.space, surface);
+            handle_toplevel_commit(&mut state.elements, surface);
         });
     }
 
@@ -95,11 +83,12 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
 
     fn resize_request(
         &mut self,
-        surface: ToplevelSurface,
-        seat: wl_seat::WlSeat,
-        serial: Serial,
-        edges: xdg_toplevel::ResizeEdge,
+        _surface: ToplevelSurface,
+        _seat: wl_seat::WlSeat,
+        _serial: Serial,
+        _edges: xdg_toplevel::ResizeEdge,
     ) {
+        /*
         let seat: Seat<AnvilState<BackendData>> = Seat::from_resource(&seat).unwrap();
 
         if let Some(touch) = seat.get_touch() {
@@ -207,10 +196,11 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
         };
 
         pointer.set_grab(self, grab, serial, Focus::Clear);
+        */
     }
 
-    fn ack_configure(&mut self, surface: WlSurface, configure: Configure) {
-        if let Configure::Toplevel(configure) = configure {
+    fn ack_configure(&mut self, _surface: WlSurface, _configuree: Configure) {
+        /*if let Configure::Toplevel(configure) = configure {
             if let Some(serial) = with_states(&surface, |states| {
                 if let Some(data) = states.data_map.get::<RefCell<SurfaceData>>() {
                     if let ResizeState::WaitingForFinalAck(_, serial) = data.borrow().resize_state {
@@ -272,6 +262,7 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
                 window.set_ssd(is_ssd);
             }
         }
+        */
     }
 
     fn fullscreen_request(
@@ -284,19 +275,15 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
             .capabilities
             .contains(xdg_toplevel::WmCapabilities::Fullscreen)
         {
-            // NOTE: This is only one part of the solution. We can set the
-            // location and configure size here, but the surface should be rendered fullscreen
-            // independently from its buffer size
             let wl_surface = surface.wl_surface();
 
-            let output_geometry =
-                fullscreen_output_geometry(wl_surface, wl_output.as_ref(), &mut self.space);
+            let output_geometry = fullscreen_output_geometry(&self.outputs);
 
             if let Some(geometry) = output_geometry {
                 let output = wl_output
                     .as_ref()
                     .and_then(Output::from_resource)
-                    .unwrap_or_else(|| self.space.outputs().next().unwrap().clone());
+                    .unwrap_or_else(|| self.outputs.iter().next().unwrap().clone());
                 let client = match self.display_handle.get_client(wl_surface.id()) {
                     Ok(client) => client,
                     Err(_) => return,
@@ -305,8 +292,8 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
                     wl_output = Some(output);
                 }
                 let window = self
-                    .space
-                    .elements()
+                    .elements
+                    .iter()
                     .find(|window| {
                         window
                             .wl_surface()
@@ -320,14 +307,6 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
                     state.size = Some(geometry.size);
                     state.fullscreen_output = wl_output;
                 });
-                output
-                    .user_data()
-                    .insert_if_missing(FullscreenSurface::default);
-                output
-                    .user_data()
-                    .get::<FullscreenSurface>()
-                    .unwrap()
-                    .set(window.clone());
                 trace!("Fullscreening: {:?}", window);
             }
         }
@@ -364,28 +343,20 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
     }
 
     fn maximize_request(&mut self, surface: ToplevelSurface) {
-        // NOTE: This should use layer-shell when it is implemented to
-        // get the correct maximum size
         if surface
             .current_state()
             .capabilities
             .contains(xdg_toplevel::WmCapabilities::Maximize)
         {
-            let window = self.window_for_surface(surface.wl_surface()).unwrap();
-            let outputs_for_window = self.space.outputs_for_element(&window);
-            let output = outputs_for_window
-                .first()
-                // The window hasn't been mapped yet, use the primary output instead
-                .or_else(|| self.space.outputs().next())
-                // Assumes that at least one output exists
-                .expect("No outputs found");
-            let geometry = self.space.output_geometry(output).unwrap();
+            let _window = self.window_for_surface(surface.wl_surface()).unwrap();
+
+            let geometry = fullscreen_output_geometry(&self.outputs).unwrap();
 
             surface.with_pending_state(|state| {
                 state.states.set(xdg_toplevel::State::Maximized);
                 state.size = Some(geometry.size);
             });
-            self.space.map_element(window, geometry.loc, true);
+            //self.space.map_element(window, geometry.loc, true);
         }
 
         // The protocol demands us to always reply with a configure,
@@ -409,7 +380,8 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
         surface.send_pending_configure();
     }
 
-    fn grab(&mut self, surface: PopupSurface, seat: wl_seat::WlSeat, serial: Serial) {
+    fn grab(&mut self, _surface: PopupSurface, _seatt: wl_seat::WlSeat, _serial: Serial) {
+        /*
         let seat: Seat<AnvilState<BackendData>> = Seat::from_resource(&seat).unwrap();
         let kind = PopupKind::Xdg(surface);
         if let Some(root) = find_popup_root_surface(&kind).ok().and_then(|root| {
@@ -455,17 +427,18 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
                     pointer.set_grab(self, PopupPointerGrab::new(&grab), serial, Focus::Keep);
                 }
             }
-        }
+        }*/
     }
 }
 
 impl<BackendData: Backend> AnvilState<BackendData> {
     pub fn move_request_xdg(
         &mut self,
-        surface: &ToplevelSurface,
-        seat: &Seat<Self>,
-        serial: Serial,
+        _surface: &ToplevelSurface,
+        _seat: &Seat<Self>,
+        _serial: Serial,
     ) {
+        /*
         if let Some(touch) = seat.get_touch() {
             if touch.has_grab(serial) {
                 let start_data = touch.grab_start_data().unwrap();
@@ -592,20 +565,18 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         };
 
         pointer.set_grab(self, grab, serial, Focus::Clear);
+        */
     }
 
-    fn unconstrain_popup(&self, popup: &PopupSurface) {
+    fn unconstrain_popup(&self, _popup: &PopupSurface) {
+        unimplemented!();
+        /*
         let Ok(root) = find_popup_root_surface(&PopupKind::Xdg(popup.clone())) else {
             return;
         };
         let Some(window) = self.window_for_surface(&root) else {
             return;
         };
-
-        let mut outputs_for_window = self.space.outputs_for_element(&window);
-        if outputs_for_window.is_empty() {
-            return;
-        }
 
         // Get a union of all outputs' geometries.
         let mut outputs_geo = self
@@ -627,57 +598,26 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         popup.with_pending_state(|state| {
             state.geometry = state.positioner.get_unconstrained_geometry(target);
         });
+        */
     }
 }
 
 /// Should be called on `WlSurface::commit` of xdg toplevel
-fn handle_toplevel_commit(space: &mut Space<WindowElement>, surface: &WlSurface) -> Option<()> {
-    let window = space
-        .elements()
+fn handle_toplevel_commit(elements: &Vec<Window>, surface: &WlSurface) -> Option<()> {
+    let window = elements
+        .iter()
         .find(|w| w.wl_surface().as_deref() == Some(surface))
         .cloned()?;
 
-    let mut window_loc = space.element_location(&window)?;
-    let geometry = window.geometry();
+    //let mut window_loc = space.element_location(&window)?;
+    let _geometry = window.geometry();
 
-    let new_loc: Point<Option<i32>, Logical> =
+    let _new_loc: Point<Option<i32>, Logical> =
         with_states(window.wl_surface().as_deref()?, |states| {
-            let data = states.data_map.get::<RefCell<SurfaceData>>()?.borrow_mut();
+            let _data = states.data_map.get::<RefCell<SurfaceData>>()?.borrow_mut();
 
-            if let ResizeState::Resizing(resize_data) = data.resize_state {
-                let edges = resize_data.edges;
-                let loc = resize_data.initial_window_location;
-                let size = resize_data.initial_window_size;
-
-                // If the window is being resized by top or left, its location must be adjusted
-                // accordingly.
-                edges.intersects(ResizeEdge::TOP_LEFT).then(|| {
-                    let new_x = edges
-                        .intersects(ResizeEdge::LEFT)
-                        .then_some(loc.x + (size.w - geometry.size.w));
-
-                    let new_y = edges
-                        .intersects(ResizeEdge::TOP)
-                        .then_some(loc.y + (size.h - geometry.size.h));
-
-                    (new_x, new_y).into()
-                })
-            } else {
-                None
-            }
+            None
         })?;
-
-    if let Some(new_x) = new_loc.x {
-        window_loc.x = new_x;
-    }
-    if let Some(new_y) = new_loc.y {
-        window_loc.y = new_y;
-    }
-
-    if new_loc.x.is_some() || new_loc.y.is_some() {
-        // If TOP or LEFT side of the window got resized, we have to move it
-        space.map_element(window, window_loc, false);
-    }
 
     Some(())
 }

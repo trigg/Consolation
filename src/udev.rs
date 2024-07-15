@@ -3,7 +3,7 @@ use std::{
     io,
     path::Path,
     process::Command,
-    sync::{atomic::Ordering, Mutex},
+    sync::atomic::Ordering,
     time::{Duration, Instant},
 };
 
@@ -11,7 +11,6 @@ use crate::state::SurfaceDmabufFeedback;
 use crate::{
     drawing::*,
     render::*,
-    shell::WindowElement,
     state::{post_repaint, take_presentation_feedback, AnvilState, Backend},
 };
 #[cfg(feature = "renderer_sync")]
@@ -54,14 +53,8 @@ use smithay::{
         SwapBuffersError,
     },
     delegate_dmabuf, delegate_drm_lease,
-    desktop::{
-        space::{Space, SurfaceTree},
-        utils::OutputPresentationFeedback,
-    },
-    input::{
-        keyboard::LedState,
-        pointer::{CursorImageAttributes, CursorImageStatus},
-    },
+    desktop::{space::SurfaceTree, utils::OutputPresentationFeedback, Window},
+    input::{keyboard::LedState, pointer::CursorImageStatus},
     output::{Mode as WlMode, Output, PhysicalProperties},
     reexports::{
         calloop::{
@@ -84,7 +77,6 @@ use smithay::{
         Clock, DeviceFd, IsAlive, Logical, Monotonic, Physical, Point, Rectangle, Scale, Transform,
     },
     wayland::{
-        compositor,
         dmabuf::{
             DmabufFeedback, DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState,
             ImportNotifier,
@@ -535,7 +527,7 @@ pub fn run_udev() {
         if result.is_err() {
             state.running.store(false, Ordering::SeqCst);
         } else {
-            state.space.refresh();
+            //state.space.refresh();
             state.popups.cleanup();
             display_handle.flush_clients().unwrap();
         }
@@ -1084,15 +1076,9 @@ impl AnvilState<UdevData> {
             );
             let global = output.create_global::<AnvilState<UdevData>>(&self.display_handle);
 
-            let x = self.space.outputs().fold(0, |acc, o| {
-                acc + self.space.output_geometry(o).unwrap().size.w
-            });
-            let position = (x, 0).into();
-
             output.set_preferred(wl_mode);
-            output.change_current_state(Some(wl_mode), None, None, Some(position));
-            self.space.map_output(&output, position);
-
+            output.change_current_state(Some(wl_mode), None, None, None);
+            self.outputs.push(output.clone());
             output.user_data().insert_if_missing(|| UdevOutputId {
                 crtc,
                 device_id: node,
@@ -1230,19 +1216,15 @@ impl AnvilState<UdevData> {
         } else {
             device.surfaces.remove(&crtc);
 
-            let output = self
-                .space
-                .outputs()
-                .find(|o| {
-                    o.user_data()
-                        .get::<UdevOutputId>()
-                        .map(|id| id.device_id == node && id.crtc == crtc)
-                        .unwrap_or(false)
-                })
-                .cloned();
+            let output = self.outputs.iter().position(|o| {
+                o.user_data()
+                    .get::<UdevOutputId>()
+                    .map(|id| id.device_id == node && id.crtc == crtc)
+                    .unwrap_or(false)
+            });
 
             if let Some(output) = output {
-                self.space.unmap_output(&output);
+                self.outputs.remove(output);
             }
         }
     }
@@ -1279,9 +1261,6 @@ impl AnvilState<UdevData> {
                 _ => {}
             }
         }
-
-        // fixup window coordinates
-        crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
     }
 
     fn device_removed(&mut self, node: DrmNode) {
@@ -1318,8 +1297,6 @@ impl AnvilState<UdevData> {
 
             debug!("Dropping device");
         }
-
-        crate::shell::fixup_positions(&mut self.space, self.pointer.current_location());
     }
 
     fn frame_finish(
@@ -1346,7 +1323,7 @@ impl AnvilState<UdevData> {
             }
         };
 
-        let output = if let Some(output) = self.space.outputs().find(|o| {
+        let output = if let Some(output) = self.outputs.iter().find(|o| {
             o.user_data().get::<UdevOutputId>()
                 == Some(&UdevOutputId {
                     device_id: surface.device_id,
@@ -1562,7 +1539,7 @@ impl AnvilState<UdevData> {
                 buffer
             });
 
-        let output = if let Some(output) = self.space.outputs().find(|o| {
+        let output = if let Some(output) = self.outputs.iter().find(|o| {
             o.user_data().get::<UdevOutputId>()
                 == Some(&UdevOutputId {
                     device_id: surface.device_id,
@@ -1578,7 +1555,7 @@ impl AnvilState<UdevData> {
         let result = render_surface(
             surface,
             &mut renderer,
-            &self.space,
+            &self.elements,
             &output,
             self.pointer.current_location(),
             &pointer_image,
@@ -1586,7 +1563,6 @@ impl AnvilState<UdevData> {
             &self.dnd_icon,
             &mut self.cursor_status,
             &self.clock,
-            self.menu_window_selection,
         );
         let reschedule = match &result {
             Ok(has_rendered) => !has_rendered,
@@ -1694,7 +1670,7 @@ impl AnvilState<UdevData> {
 fn render_surface<'a>(
     surface: &'a mut SurfaceData,
     renderer: &mut UdevRenderer<'a>,
-    space: &Space<WindowElement>,
+    window_elements: &Vec<Window>,
     output: &Output,
     pointer_location: Point<f64, Logical>,
     pointer_image: &MemoryRenderBuffer,
@@ -1702,66 +1678,66 @@ fn render_surface<'a>(
     dnd_icon: &Option<wl_surface::WlSurface>,
     cursor_status: &mut CursorImageStatus,
     clock: &Clock<Monotonic>,
-    menu_window_selection: Option<usize>,
 ) -> Result<bool, SwapBuffersError> {
-    let output_geometry = space.output_geometry(output).unwrap();
     let scale = Scale::from(output.current_scale().fractional_scale());
 
     let mut custom_elements: Vec<CustomRenderElements<_>> = Vec::new();
 
-    if output_geometry.to_f64().contains(pointer_location) {
-        let cursor_hotspot = if let CursorImageStatus::Surface(ref surface) = cursor_status {
-            compositor::with_states(surface, |states| {
-                states
-                    .data_map
-                    .get::<Mutex<CursorImageAttributes>>()
-                    .unwrap()
-                    .lock()
-                    .unwrap()
-                    .hotspot
-            })
-        } else {
-            (0, 0).into()
-        };
-        let cursor_pos = pointer_location - output_geometry.loc.to_f64() - cursor_hotspot.to_f64();
-        let cursor_pos_scaled = cursor_pos.to_physical(scale).to_i32_round();
+    let (scale, offset) = if let Some(window) = window_elements.iter().nth(0) {
+        let reference = window.bbox().size.to_f64();
+        let constrain = output.current_mode().unwrap().size.to_f64();
 
-        // set cursor
-        pointer_element.set_buffer(pointer_image.clone());
+        let mouse_scale: Scale<f64> = constrain / reference;
+        let mouse_scale = Scale::from(f64::min(mouse_scale.x, mouse_scale.y));
 
-        // draw the cursor as relevant
-        {
-            // reset the cursor if the surface is no longer alive
-            let mut reset = false;
-            if let CursorImageStatus::Surface(ref surface) = *cursor_status {
-                reset = !surface.alive();
-            }
-            if reset {
-                *cursor_status = CursorImageStatus::default_named();
-            }
+        let scaled_reference = reference.to_f64().upscale(mouse_scale);
+        let top_offset = (constrain.h as f64 - scaled_reference.h as f64) / 2f64;
+        let left_offset = (constrain.w as f64 - scaled_reference.w as f64) / 2f64;
+        let offset: Point<f64, Physical> = Point::from((left_offset, top_offset));
+        (mouse_scale, offset)
+    } else {
+        let offset: Point<f64, Physical> = Point::from((0 as f64, 0 as f64));
+        (scale, offset)
+    };
 
-            pointer_element.set_status(cursor_status.clone());
+    let cursor_pos = pointer_location;
+    let cursor_pos_scaled = cursor_pos.to_physical(scale);
+    let cursor_pos_scaled: Point<i32, Physical> = (cursor_pos_scaled + offset).to_i32_round();
+    // set cursor
+    pointer_element.set_buffer(pointer_image.clone());
+
+    // draw the cursor as relevant
+    {
+        // reset the cursor if the surface is no longer alive
+        let mut reset = false;
+        if let CursorImageStatus::Surface(ref surface) = *cursor_status {
+            reset = !surface.alive();
+        }
+        if reset {
+            *cursor_status = CursorImageStatus::default_named();
         }
 
-        custom_elements.extend(pointer_element.render_elements(
-            renderer,
-            cursor_pos_scaled,
-            scale,
-            1.0,
-        ));
+        pointer_element.set_status(cursor_status.clone());
+    }
 
-        // draw the dnd icon if applicable
-        {
-            if let Some(wl_surface) = dnd_icon.as_ref() {
-                if wl_surface.alive() {
-                    custom_elements.extend(AsRenderElements::<UdevRenderer<'a>>::render_elements(
-                        &SurfaceTree::from_surface(wl_surface),
-                        renderer,
-                        cursor_pos_scaled,
-                        scale,
-                        1.0,
-                    ));
-                }
+    custom_elements.extend(pointer_element.render_elements(
+        renderer,
+        cursor_pos_scaled,
+        scale,
+        1.0,
+    ));
+
+    // draw the dnd icon if applicable
+    {
+        if let Some(wl_surface) = dnd_icon.as_ref() {
+            if wl_surface.alive() {
+                custom_elements.extend(AsRenderElements::<UdevRenderer<'a>>::render_elements(
+                    &SurfaceTree::from_surface(wl_surface),
+                    renderer,
+                    cursor_pos_scaled,
+                    scale,
+                    1.0,
+                ));
             }
         }
     }
@@ -1773,13 +1749,8 @@ fn render_surface<'a>(
         custom_elements.push(CustomRenderElements::Fps(element.clone()));
     }
 
-    let (elements, clear_color) = output_elements(
-        output,
-        space,
-        custom_elements,
-        renderer,
-        menu_window_selection,
-    );
+    let (elements, clear_color) =
+        output_elements(output, window_elements, custom_elements, renderer);
     let SurfaceCompositorRenderResult {
         rendered,
         states,
@@ -1792,7 +1763,7 @@ fn render_surface<'a>(
     post_repaint(
         output,
         &states,
-        space,
+        window_elements,
         surface
             .dmabuf_feedback
             .as_ref()
@@ -1804,7 +1775,8 @@ fn render_surface<'a>(
     );
 
     if rendered {
-        let output_presentation_feedback = take_presentation_feedback(output, space, &states);
+        let output_presentation_feedback =
+            take_presentation_feedback(output, window_elements, &states);
         let damage = damage.cloned();
         surface
             .compositor
