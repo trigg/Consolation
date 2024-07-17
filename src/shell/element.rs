@@ -27,7 +27,7 @@ use smithay::{
         wayland_server::protocol::wl_surface::WlSurface,
     },
     render_elements,
-    utils::{user_data::UserDataMap, IsAlive, Logical, Physical, Point, Rectangle, Scale, Serial},
+    utils::{user_data::UserDataMap, IsAlive, Logical, Physical, Point, Scale, Serial},
     wayland::{
         compositor::SurfaceData as WlSurfaceData, dmabuf::DmabufFeedback, seat::WaylandFocus,
     },
@@ -362,51 +362,6 @@ impl<BackendData: Backend> TouchTarget<AnvilState<BackendData>> for SSD {
         _event: &smithay::input::touch::OrientationEvent,
         _seq: Serial,
     ) {
-    }
-}
-
-impl SpaceElement for WindowElement {
-    fn geometry(&self) -> Rectangle<i32, Logical> {
-        let mut geo = SpaceElement::geometry(&self.0);
-        if self.decoration_state().is_ssd {
-            geo.size.h += HEADER_BAR_HEIGHT;
-        }
-        geo
-    }
-    fn bbox(&self) -> Rectangle<i32, Logical> {
-        let mut bbox = SpaceElement::bbox(&self.0);
-        if self.decoration_state().is_ssd {
-            bbox.size.h += HEADER_BAR_HEIGHT;
-        }
-        bbox
-    }
-    fn is_in_input_region(&self, point: &Point<f64, Logical>) -> bool {
-        if self.decoration_state().is_ssd {
-            point.y < HEADER_BAR_HEIGHT as f64
-                || SpaceElement::is_in_input_region(
-                    &self.0,
-                    &(*point - Point::from((0.0, HEADER_BAR_HEIGHT as f64))),
-                )
-        } else {
-            SpaceElement::is_in_input_region(&self.0, point)
-        }
-    }
-    fn z_index(&self) -> u8 {
-        SpaceElement::z_index(&self.0)
-    }
-
-    fn set_activate(&self, activated: bool) {
-        SpaceElement::set_activate(&self.0, activated);
-    }
-    fn output_enter(&self, output: &Output, overlap: Rectangle<i32, Logical>) {
-        SpaceElement::output_enter(&self.0, output, overlap);
-    }
-    fn output_leave(&self, output: &Output) {
-        SpaceElement::output_leave(&self.0, output);
-    }
-    #[profiling::function]
-    fn refresh(&self) {
-        SpaceElement::refresh(&self.0);
     }
 }
 

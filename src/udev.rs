@@ -1075,7 +1075,6 @@ impl AnvilState<UdevData> {
                 },
             );
             let global = output.create_global::<AnvilState<UdevData>>(&self.display_handle);
-
             output.set_preferred(wl_mode);
             output.change_current_state(Some(wl_mode), None, None, None);
             self.outputs.push(output.clone());

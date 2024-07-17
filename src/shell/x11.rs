@@ -68,6 +68,7 @@ impl<BackendData: Backend> XwmHandler for AnvilState<BackendData> {
             unreachable!()
         };
         xsurface.configure(Some(bbox)).unwrap();
+        self.update_keyboard_focus();
         //window.set_ssd(!xsurface.is_decorated());
     }
 

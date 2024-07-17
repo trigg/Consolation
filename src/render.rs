@@ -4,21 +4,19 @@ use smithay::{
         element::{
             surface::WaylandSurfaceRenderElement,
             utils::{
-                ConstrainAlign, ConstrainScaleBehavior, CropRenderElement, RelocateRenderElement,
-                RescaleRenderElement,
+                constrain_as_render_elements, ConstrainAlign, ConstrainScaleBehavior,
+                CropRenderElement, RelocateRenderElement, RescaleRenderElement,
             },
             AsRenderElements, RenderElement, Wrap,
         },
         ImportAll, ImportMem, Renderer,
     },
     desktop::{
-        space::{
-            constrain_space_element, ConstrainBehavior, ConstrainReference, SpaceRenderElements,
-        },
+        space::{ConstrainBehavior, ConstrainReference, SpaceRenderElements},
         LayerSurface, Window,
     },
     output::Output,
-    utils::{Point, Rectangle, Scale, Size},
+    utils::{Rectangle, Scale},
     wayland::shell::wlr_layer::Layer,
 };
 
@@ -87,7 +85,7 @@ where
     C: From<CropRenderElement<RelocateRenderElement<RescaleRenderElement<WindowRenderElement<R>>>>>
         + 'a,
 {
-    let constrain_behavior = ConstrainBehavior {
+    let behavior = ConstrainBehavior {
         reference: ConstrainReference::BoundingBox,
         behavior: ConstrainScaleBehavior::Fit,
         align: ConstrainAlign::CENTER,
@@ -95,14 +93,21 @@ where
 
     let constrain = zone;
     let wele = WindowElement(window);
-    constrain_space_element(
-        renderer,
+
+    let location = zone.loc;
+
+    let scale_reference = wele.0.bbox();
+
+    constrain_as_render_elements(
         &wele,
-        zone.loc,
+        renderer,
+        (location - scale_reference.loc).to_physical_precise_round(1.0),
         1.0,
+        constrain.to_physical_precise_round(1.0),
+        scale_reference.to_physical_precise_round(1.0),
+        behavior.behavior,
+        behavior.align,
         1.0,
-        constrain,
-        constrain_behavior,
     )
     .into_iter()
 }

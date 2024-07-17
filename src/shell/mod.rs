@@ -42,9 +42,10 @@ use crate::{
 
 mod element;
 pub(crate) mod ssd;
+pub(crate) mod toplevel_manager;
 #[cfg(feature = "xwayland")]
 mod x11;
-mod xdg;
+pub mod xdg;
 
 pub use self::element::*;
 

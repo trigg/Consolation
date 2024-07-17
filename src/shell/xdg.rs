@@ -7,7 +7,11 @@ use smithay::{
     reexports::{
         wayland_protocols::xdg::shell::server::xdg_toplevel,
         wayland_server::{
-            protocol::{wl_output, wl_seat, wl_surface::WlSurface},
+            protocol::{
+                wl_output::{self, WlOutput},
+                wl_seat,
+                wl_surface::WlSurface,
+            },
             Resource,
         },
     },
@@ -23,9 +27,13 @@ use smithay::{
 };
 use tracing::{trace, warn};
 
-use crate::state::{AnvilState, Backend};
+use crate::state::{update_toplevel_handle, AnvilState, Backend};
 
-use super::{fullscreen_output_geometry, place_new_window, FullscreenSurface, SurfaceData};
+use super::{
+    fullscreen_output_geometry, place_new_window,
+    toplevel_manager::{self, TopLevelManagerHandle},
+    FullscreenSurface, SurfaceData,
+};
 
 impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
@@ -47,6 +55,25 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
         compositor::add_post_commit_hook(surface.wl_surface(), |state: &mut Self, _, surface| {
             handle_toplevel_commit(&mut state.elements, surface);
         });
+
+        let handlers = self.toplevel_manager.new_toplevel::<Self>(&window);
+
+        let handle_holder = window.user_data().get_or_insert(|| TopLevelManagerHandle {
+            handlers: Default::default(),
+        });
+
+        handle_holder.handlers.lock().unwrap().extend(handlers);
+        self.update_keyboard_focus();
+
+        //let list = handle_holder.handlers.lock().unwrap().clone();
+        update_toplevel_handle(window);
+        //toplevel_manager::set_title(&list, "Testing".to_string());
+        //toplevel_manager::set_appid(&list, "Test_app".to_string());
+        //toplevel_manager::set_state(&list, [].into());
+        /*for output in self.outputs {
+            toplevel_manager::output_enter(&list, output);
+        }*/
+        //toplevel_manager::done(&list);
     }
 
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
@@ -307,6 +334,7 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
                     state.size = Some(geometry.size);
                     state.fullscreen_output = wl_output;
                 });
+                update_toplevel_handle(window.clone());
                 trace!("Fullscreening: {:?}", window);
             }
         }
@@ -348,7 +376,7 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
             .capabilities
             .contains(xdg_toplevel::WmCapabilities::Maximize)
         {
-            let _window = self.window_for_surface(surface.wl_surface()).unwrap();
+            let window = self.window_for_surface(surface.wl_surface()).unwrap();
 
             let geometry = fullscreen_output_geometry(&self.outputs).unwrap();
 
@@ -356,6 +384,8 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
                 state.states.set(xdg_toplevel::State::Maximized);
                 state.size = Some(geometry.size);
             });
+            update_toplevel_handle(window);
+
             //self.space.map_element(window, geometry.loc, true);
         }
 

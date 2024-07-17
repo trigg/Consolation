@@ -22,7 +22,7 @@ use smithay::{
     },
     output::Output,
     reexports::wayland_server::protocol::wl_pointer,
-    utils::{Logical, Point, Serial, SERIAL_COUNTER as SCOUNTER},
+    utils::{Logical, Point, SERIAL_COUNTER as SCOUNTER},
     wayland::input_method::InputMethodSeat,
 };
 
@@ -164,14 +164,14 @@ impl<BackendData: Backend> AnvilState<BackendData> {
     }
 
     fn on_pointer_button<B: InputBackend>(&mut self, evt: B::PointerButtonEvent) {
-        let serial = SCOUNTER.next_serial();
         let button = evt.button_code();
 
         let state = wl_pointer::ButtonState::from(evt.state());
 
         if wl_pointer::ButtonState::Pressed == state {
-            self.update_keyboard_focus(serial);
+            self.update_keyboard_focus();
         };
+        let serial = SCOUNTER.next_serial();
         let pointer = self.pointer.clone();
         pointer.button(
             self,
@@ -185,7 +185,8 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         pointer.frame(self);
     }
 
-    fn update_keyboard_focus(&mut self, serial: Serial) {
+    pub fn update_keyboard_focus(&mut self) {
+        let serial = SCOUNTER.next_serial();
         let keyboard = self.seat.get_keyboard().unwrap();
         let touch = self.seat.get_touch();
         let input_method = self.seat.input_method();
@@ -382,7 +383,6 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         evt: B::PointerMotionAbsoluteEvent,
         output: &Output,
     ) {
-        println!("Pointe absolute windowed");
         let output_geo = self.space.output_geometry(output).unwrap();
 
         let pos = evt.position_transformed(output_geo.size) + output_geo.loc.to_f64();
@@ -895,10 +895,9 @@ impl AnvilState<UdevData> {
             return;
         };
 
-        let serial = SCOUNTER.next_serial();
-        self.update_keyboard_focus(serial);
-
+        self.update_keyboard_focus();
         //let under = self.surface_under(touch_location);
+        let serial = SCOUNTER.next_serial();
 
         let touch_surface = self.current_window_with_origin();
         handle.down(
