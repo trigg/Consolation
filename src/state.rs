@@ -6,8 +6,9 @@ use std::{
 
 use tracing::{info, warn};
 
-use crate::shell::toplevel_manager::{
-    self, TopLevelHandle, TopLevelMan, TopLevelManager, TopLevelManagerHandle,
+use crate::{
+    delegate_foreign_toplevel,
+    shell::toplevel_manager::{ForeignToplevelHandler, ForeignToplevelManagerState},
 };
 use smithay::{
     backend::{
@@ -43,15 +44,11 @@ use smithay::{
             self as xdg_decoration,
             zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode,
         },
-        wayland_protocols_wlr::foreign_toplevel::v1::server::{
-            zwlr_foreign_toplevel_handle_v1::{self, ZwlrForeignToplevelHandleV1},
-            zwlr_foreign_toplevel_manager_v1::{self, ZwlrForeignToplevelManagerV1},
-        },
         wayland_server::{
             self,
             backend::{ClientData, ClientId, DisconnectReason},
-            protocol::{wl_data_source::WlDataSource, wl_surface::WlSurface},
-            Client, Dispatch, Display, DisplayHandle, GlobalDispatch, Resource,
+            protocol::{wl_data_source::WlDataSource, wl_output::WlOutput, wl_surface::WlSurface},
+            Display, DisplayHandle, Resource,
         },
     },
     utils::{Clock, Monotonic, Rectangle},
@@ -93,7 +90,7 @@ use smithay::{
             wlr_layer::WlrLayerShellState,
             xdg::{
                 decoration::{XdgDecorationHandler, XdgDecorationState},
-                ToplevelSurface, XdgShellState, XdgToplevelSurfaceData,
+                ToplevelSurface, XdgShellHandler, XdgShellState, XdgToplevelSurfaceData,
             },
         },
         shm::{ShmHandler, ShmState},
@@ -107,6 +104,7 @@ use smithay::{
         },
         xdg_foreign::{XdgForeignHandler, XdgForeignState},
     },
+    xwayland::XwmHandler,
 };
 
 #[cfg(feature = "xwayland")]
@@ -184,7 +182,7 @@ pub struct AnvilState<BackendData: Backend + 'static> {
 
     #[cfg(feature = "debug")]
     pub renderdoc: Option<renderdoc::RenderDoc<renderdoc::V141>>,
-    pub toplevel_manager: TopLevelManager,
+    pub toplevel_manager: ForeignToplevelManagerState,
 }
 
 delegate_compositor!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
@@ -357,6 +355,8 @@ delegate_virtual_keyboard_manager!(@<BackendData: Backend + 'static> AnvilState<
 delegate_pointer_gestures!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
 
 delegate_relative_pointer!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
+
+delegate_foreign_toplevel!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
 
 impl<BackendData: Backend> PointerConstraintsHandler for AnvilState<BackendData> {
     fn new_constraint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>) {
@@ -568,143 +568,6 @@ impl<BackendData: Backend> XdgForeignHandler for AnvilState<BackendData> {
 }
 smithay::delegate_xdg_foreign!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
 
-impl<BackendData: Backend + 'static> Dispatch<ZwlrForeignToplevelHandleV1, ()>
-    for AnvilState<BackendData>
-{
-    /*
-      A Panel/Dock/Client has requested an action on a window
-    */
-    fn request(
-        state: &mut Self,
-        _client: &smithay::reexports::wayland_server::Client,
-        resource: &ZwlrForeignToplevelHandleV1,
-        request: <ZwlrForeignToplevelHandleV1 as wayland_server::Resource>::Request,
-        _data: &(),
-        _dhandle: &DisplayHandle,
-        _data_init: &mut smithay::reexports::wayland_server::DataInit<'_, Self>,
-    ) {
-        match request {
-            zwlr_foreign_toplevel_handle_v1::Request::SetMaximized => {
-                if let Some(_window) = state.toplevel_manager.get_window(&state.elements, resource)
-                {
-                    todo!();
-                }
-            }
-            zwlr_foreign_toplevel_handle_v1::Request::UnsetMaximized => {
-                if let Some(_window) = state.toplevel_manager.get_window(&state.elements, resource)
-                {
-                    todo!();
-                }
-            }
-            zwlr_foreign_toplevel_handle_v1::Request::SetMinimized => {
-                if let Some(window) = state.toplevel_manager.get_window(&state.elements, resource) {
-                    state.raise_window(&window);
-                }
-            }
-            zwlr_foreign_toplevel_handle_v1::Request::UnsetMinimized => {
-                if let Some(window) = state.toplevel_manager.get_window(&state.elements, resource) {
-                    state.raise_window(&window);
-                }
-            }
-            zwlr_foreign_toplevel_handle_v1::Request::Activate { seat: _ } => {
-                if let Some(window) = state.toplevel_manager.get_window(&state.elements, resource) {
-                    state.raise_window(&window);
-                }
-            }
-            zwlr_foreign_toplevel_handle_v1::Request::Close => {
-                if let Some(_window) = state.toplevel_manager.get_window(&state.elements, resource)
-                {
-                    todo!();
-                }
-            }
-            zwlr_foreign_toplevel_handle_v1::Request::SetRectangle {
-                surface: _,
-                x: _,
-                y: _,
-                width: _,
-                height: _,
-            } => {} // Makes no odds in this compositor
-            zwlr_foreign_toplevel_handle_v1::Request::Destroy => {}
-            zwlr_foreign_toplevel_handle_v1::Request::SetFullscreen { output: _ } => {
-                if let Some(_window) = state.toplevel_manager.get_window(&state.elements, resource)
-                {
-                    todo!();
-                }
-            }
-            zwlr_foreign_toplevel_handle_v1::Request::UnsetFullscreen => {
-                if let Some(_window) = state.toplevel_manager.get_window(&state.elements, resource)
-                {
-                    todo!();
-                }
-            }
-            _ => todo!(),
-        }
-    }
-}
-
-impl<BackendData: Backend + 'static> GlobalDispatch<ZwlrForeignToplevelManagerV1, ()>
-    for AnvilState<BackendData>
-{
-    /*
-       A new Panel/Dock/Client has connected. They need a toplevel handler for every window
-
-       We also store the handler into the Window Userdata so it can be accessed directly
-    */
-    fn bind(
-        state: &mut Self,
-        handle: &DisplayHandle,
-        client: &smithay::reexports::wayland_server::Client,
-        resource: smithay::reexports::wayland_server::New<ZwlrForeignToplevelManagerV1>,
-        _global_data: &(),
-        data_init: &mut smithay::reexports::wayland_server::DataInit<'_, Self>,
-    ) {
-        let resource = data_init.init(resource, Default::default());
-
-        tracing::info!("New TLM");
-        state.toplevel_manager.managers.push(TopLevelMan {
-            resource: resource.clone(),
-            client: client.clone(),
-            handler: handle.clone(),
-        });
-
-        tracing::info!("Creating {} handles for TLM", state.elements.len());
-        for window in state.elements.iter() {
-            let tlmh = window.user_data().get_or_insert(|| TopLevelManagerHandle {
-                handlers: Default::default(),
-            });
-            let a = client
-                .create_resource::<ZwlrForeignToplevelHandleV1, (), Self>(handle, 3, ())
-                .unwrap();
-
-            resource.toplevel(&a);
-            tlmh.handlers.lock().unwrap().push(a);
-
-            update_toplevel_handle(window.clone());
-        }
-    }
-}
-
-impl<BackendData: Backend + 'static> Dispatch<ZwlrForeignToplevelManagerV1, ()>
-    for AnvilState<BackendData>
-{
-    fn request(
-        _state: &mut Self,
-        _client: &smithay::reexports::wayland_server::Client,
-        _resource: &ZwlrForeignToplevelManagerV1,
-        request: <ZwlrForeignToplevelManagerV1 as wayland_server::Resource>::Request,
-        _data: &(),
-        _dhandle: &DisplayHandle,
-        data_init: &mut smithay::reexports::wayland_server::DataInit<'_, Self>,
-    ) {
-        match request {
-            zwlr_foreign_toplevel_manager_v1::Request::Stop => {
-                tracing::info!("Requested FRM Stop");
-            }
-            _ => todo!(),
-        }
-    }
-}
-
 impl<BackendData: Backend + 'static> AnvilState<BackendData> {
     pub fn init(
         display: Display<AnvilState<BackendData>>,
@@ -778,7 +641,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             PointerGesturesState::new::<Self>(&dh);
         }
         TabletManagerState::new::<Self>(&dh);
-        let toplevel_manager = TopLevelManager::new::<Self>(&dh);
+        let toplevel_manager = ForeignToplevelManagerState::new::<Self, _>(&dh, |_client| true);
         SecurityContextState::new::<Self, _>(&dh, |client| {
             client
                 .get_data::<ClientState>()
@@ -926,6 +789,165 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             self.lower_window_number(windex);
         }
     }
+
+    pub fn get_window(&mut self, surface: &WlSurface) -> Option<Window> {
+        self.elements
+            .iter()
+            .find(|window| match window.wl_surface() {
+                Some(surf) => surf.id() == surface.id(),
+                None => false,
+            })
+            .map(|window| window.clone())
+    }
+
+    pub fn maximize_window(&mut self, window: &Window) {
+        if window.is_x11() {
+            #[cfg(feature = "xwayland")]
+            if let Some(xwindow) = window.x11_surface() {
+                if let Some(xwmid) = xwindow.xwm_id() {
+                    XwmHandler::maximize_request(self, xwmid, xwindow.clone());
+                }
+            }
+        } else if window.is_wayland() {
+            if let Some(toplevel) = window.toplevel() {
+                XdgShellHandler::maximize_request(self, toplevel.clone());
+            }
+        }
+    }
+
+    pub fn unmaximize_window(&mut self, window: &Window) {
+        if window.is_x11() {
+            #[cfg(feature = "xwayland")]
+            if let Some(xwindow) = window.x11_surface() {
+                if let Some(xwmid) = xwindow.xwm_id() {
+                    XwmHandler::unmaximize_request(self, xwmid, xwindow.clone());
+                }
+            }
+        } else if window.is_wayland() {
+            if let Some(toplevel) = window.toplevel() {
+                XdgShellHandler::unmaximize_request(self, toplevel.clone());
+            }
+        }
+    }
+
+    pub fn minimize_window(&mut self, window: &Window) {
+        if window.is_x11() {
+            #[cfg(feature = "xwayland")]
+            if let Some(xwindow) = window.x11_surface() {
+                if let Some(xwmid) = xwindow.xwm_id() {
+                    XwmHandler::minimize_request(self, xwmid, xwindow.clone());
+                }
+            }
+        } else if window.is_wayland() {
+            if let Some(toplevel) = window.toplevel() {
+                XdgShellHandler::minimize_request(self, toplevel.clone());
+            }
+        }
+    }
+
+    pub fn unminimize_window(&mut self, window: &Window) {
+        if window.is_x11() {
+            #[cfg(feature = "xwayland")]
+            if let Some(xwindow) = window.x11_surface() {
+                if let Some(xwmid) = xwindow.xwm_id() {
+                    XwmHandler::unminimize_request(self, xwmid, xwindow.clone());
+                }
+            }
+        } else if window.is_wayland() {
+            self.raise_window(window);
+        }
+    }
+
+    pub fn fullscreen_window(&mut self, window: &Window, output: Option<WlOutput>) {
+        if window.is_x11() {
+            #[cfg(feature = "xwayland")]
+            if let Some(xwindow) = window.x11_surface() {
+                if let Some(xid) = xwindow.xwm_id() {
+                    XwmHandler::fullscreen_request(self, xid, xwindow.clone());
+                }
+            }
+        } else {
+            XdgShellHandler::fullscreen_request(self, window.toplevel().unwrap().clone(), output);
+        }
+    }
+
+    pub fn close_window(&mut self, window: &Window) {
+        if window.is_x11() {
+            if let Some(xwindow) = window.x11_surface() {
+                let _res = xwindow.close();
+            }
+        } else if window.is_wayland() {
+            if let Some(toplevel) = window.toplevel() {
+                toplevel.send_close();
+            }
+        }
+    }
+}
+
+impl<BackendData: Backend + 'static> ForeignToplevelHandler for AnvilState<BackendData> {
+    fn foreign_toplevel_manager_state(&mut self) -> &mut ForeignToplevelManagerState {
+        &mut self.toplevel_manager
+    }
+
+    fn activate(&mut self, wl_surface: WlSurface) {
+        match self.get_window(&wl_surface) {
+            Some(window) => self.raise_window(&window),
+            None => {}
+        }
+    }
+
+    fn close(&mut self, wl_surface: WlSurface) {
+        match self.get_window(&wl_surface) {
+            Some(window) => self.close_window(&window),
+            None => {}
+        }
+    }
+
+    fn set_fullscreen(
+        &mut self,
+        wl_surface: WlSurface,
+        wl_output: Option<wayland_server::protocol::wl_output::WlOutput>,
+    ) {
+        match self.get_window(&wl_surface) {
+            Some(window) => self.fullscreen_window(&window, wl_output),
+            None => {}
+        }
+    }
+
+    fn unset_fullscreen(&mut self, wl_surface: WlSurface) {
+        match self.get_window(&wl_surface) {
+            Some(window) => self.fullscreen_window(&window, None),
+            None => {}
+        }
+    }
+
+    fn set_maximized(&mut self, wl_surface: WlSurface) {
+        match self.get_window(&wl_surface) {
+            Some(window) => self.maximize_window(&window),
+            None => {}
+        }
+    }
+
+    fn unset_maximized(&mut self, wl_surface: WlSurface) {
+        match self.get_window(&wl_surface) {
+            Some(window) => self.unmaximize_window(&window),
+            None => {}
+        }
+    }
+
+    fn set_minimized(&mut self, wl_surface: WlSurface) {
+        match self.get_window(&wl_surface) {
+            Some(window) => self.minimize_window(&window),
+            None => {}
+        }
+    }
+
+    fn unset_minimized(&mut self, wl_surface: WlSurface) {
+        match self.get_window(&wl_surface) {
+            Some(window) => self.unminimize_window(&window),
+            None => {}
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -1008,20 +1030,6 @@ pub fn post_repaint(
             );
         }
     }
-}
-
-pub fn update_toplevel_handle(window: Window) {
-    let handle_holder = window.user_data().get_or_insert(|| TopLevelManagerHandle {
-        handlers: Default::default(),
-    });
-    let list = handle_holder.handlers.lock().unwrap().clone();
-    toplevel_manager::set_title(&list, "Testing".to_string());
-    toplevel_manager::set_appid(&list, "Testing".to_string());
-    toplevel_manager::set_state(&list, [3].into());
-    //for output in self.outputs {
-    //    toplevel_manager::output_enter(&list, output);
-    //}
-    toplevel_manager::done(&list);
 }
 
 #[profiling::function]

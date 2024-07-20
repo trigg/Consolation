@@ -8,7 +8,7 @@ use smithay::{
         wayland_protocols::xdg::shell::server::xdg_toplevel,
         wayland_server::{
             protocol::{
-                wl_output::{self, WlOutput},
+                wl_output::{self},
                 wl_seat,
                 wl_surface::WlSurface,
             },
@@ -27,13 +27,9 @@ use smithay::{
 };
 use tracing::{trace, warn};
 
-use crate::state::{update_toplevel_handle, AnvilState, Backend};
+use crate::state::{AnvilState, Backend};
 
-use super::{
-    fullscreen_output_geometry, place_new_window,
-    toplevel_manager::{self, TopLevelManagerHandle},
-    FullscreenSurface, SurfaceData,
-};
+use super::{fullscreen_output_geometry, place_new_window, FullscreenSurface, SurfaceData};
 
 impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
@@ -56,24 +52,7 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
             handle_toplevel_commit(&mut state.elements, surface);
         });
 
-        let handlers = self.toplevel_manager.new_toplevel::<Self>(&window);
-
-        let handle_holder = window.user_data().get_or_insert(|| TopLevelManagerHandle {
-            handlers: Default::default(),
-        });
-
-        handle_holder.handlers.lock().unwrap().extend(handlers);
         self.update_keyboard_focus();
-
-        //let list = handle_holder.handlers.lock().unwrap().clone();
-        update_toplevel_handle(window);
-        //toplevel_manager::set_title(&list, "Testing".to_string());
-        //toplevel_manager::set_appid(&list, "Test_app".to_string());
-        //toplevel_manager::set_state(&list, [].into());
-        /*for output in self.outputs {
-            toplevel_manager::output_enter(&list, output);
-        }*/
-        //toplevel_manager::done(&list);
     }
 
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
@@ -334,7 +313,6 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
                     state.size = Some(geometry.size);
                     state.fullscreen_output = wl_output;
                 });
-                update_toplevel_handle(window.clone());
                 trace!("Fullscreening: {:?}", window);
             }
         }
@@ -376,7 +354,7 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
             .capabilities
             .contains(xdg_toplevel::WmCapabilities::Maximize)
         {
-            let window = self.window_for_surface(surface.wl_surface()).unwrap();
+            let _window = self.window_for_surface(surface.wl_surface()).unwrap();
 
             let geometry = fullscreen_output_geometry(&self.outputs).unwrap();
 
@@ -384,7 +362,6 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
                 state.states.set(xdg_toplevel::State::Maximized);
                 state.size = Some(geometry.size);
             });
-            update_toplevel_handle(window);
 
             //self.space.map_element(window, geometry.loc, true);
         }
@@ -408,6 +385,29 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
             state.size = None;
         });
         surface.send_pending_configure();
+    }
+
+    fn minimize_request(&mut self, surface: ToplevelSurface) {
+        if surface
+            .current_state()
+            .capabilities
+            .contains(xdg_toplevel::WmCapabilities::Maximize)
+        {
+            let _window = self.window_for_surface(surface.wl_surface()).unwrap();
+
+            let geometry = fullscreen_output_geometry(&self.outputs).unwrap();
+
+            surface.with_pending_state(|state| {
+                state.states.set(xdg_toplevel::State::Maximized);
+                state.size = Some(geometry.size);
+            });
+
+            //self.space.map_element(window, geometry.loc, true);
+        }
+
+        // The protocol demands us to always reply with a configure,
+        // regardless of we fulfilled the request or not
+        surface.send_configure();
     }
 
     fn grab(&mut self, _surface: PopupSurface, _seatt: wl_seat::WlSeat, _serial: Serial) {

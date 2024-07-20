@@ -39,8 +39,6 @@ use crate::{focus::PointerFocusTarget, state::Backend, AnvilState};
 #[derive(Debug, Clone, PartialEq)]
 pub struct WindowElement(pub Window);
 
-trait Element: std::fmt::Debug {}
-
 impl WindowElement {
     pub fn surface_under(
         &self,

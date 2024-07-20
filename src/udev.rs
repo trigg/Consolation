@@ -7,12 +7,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::state::SurfaceDmabufFeedback;
 use crate::{
     drawing::*,
     render::*,
     state::{post_repaint, take_presentation_feedback, AnvilState, Backend},
 };
+use crate::{shell::toplevel_manager, state::SurfaceDmabufFeedback};
 #[cfg(feature = "renderer_sync")]
 use smithay::backend::drm::compositor::PrimaryPlaneElement;
 #[cfg(feature = "egl")]
@@ -528,6 +528,12 @@ pub fn run_udev() {
             state.running.store(false, Ordering::SeqCst);
         } else {
             //state.space.refresh();
+            let size = state.elements.len();
+            state.elements.retain(|window| window.alive());
+            if size != state.elements.len() {
+                state.update_keyboard_focus();
+            }
+            toplevel_manager::refresh(&mut state);
             state.popups.cleanup();
             display_handle.flush_clients().unwrap();
         }
@@ -1683,8 +1689,10 @@ fn render_surface<'a>(
     let mut custom_elements: Vec<CustomRenderElements<_>> = Vec::new();
 
     let (scale, offset) = if let Some(window) = window_elements.iter().nth(0) {
+        let layer_map = smithay::desktop::layer_map_for_output(output);
+        let constrain = layer_map.non_exclusive_zone().size.to_f64();
         let reference = window.bbox().size.to_f64();
-        let constrain = output.current_mode().unwrap().size.to_f64();
+        //let constrain = output.current_mode().unwrap().size.to_f64();
 
         let mouse_scale: Scale<f64> = constrain / reference;
         let mouse_scale = Scale::from(f64::min(mouse_scale.x, mouse_scale.y));
