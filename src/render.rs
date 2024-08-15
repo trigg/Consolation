@@ -1,19 +1,15 @@
 use smithay::{
-    backend::{
-        renderer::{
-            damage::{Error as OutputDamageTrackerError, OutputDamageTracker, RenderOutputResult},
-            element::{
-                self,
-                surface::WaylandSurfaceRenderElement,
-                utils::{
-                    constrain_as_render_elements, ConstrainAlign, ConstrainScaleBehavior,
-                    CropRenderElement, RelocateRenderElement, RescaleRenderElement,
-                },
-                AsRenderElements, RenderElement, Wrap,
+    backend::renderer::{
+        damage::{Error as OutputDamageTrackerError, OutputDamageTracker, RenderOutputResult},
+        element::{
+            surface::WaylandSurfaceRenderElement,
+            utils::{
+                constrain_as_render_elements, ConstrainAlign, ConstrainScaleBehavior,
+                CropRenderElement, RelocateRenderElement, RescaleRenderElement,
             },
-            ImportAll, ImportMem, Renderer,
+            AsRenderElements, RenderElement, Wrap,
         },
-        x11::X11Surface,
+        ImportAll, ImportMem, Renderer,
     },
     desktop::{
         space::{ConstrainBehavior, ConstrainReference, SpaceRenderElements},

@@ -13,6 +13,7 @@ use crate::{
     state::{post_repaint, take_presentation_feedback, AnvilState, Backend},
 };
 use crate::{shell::toplevel_manager, state::SurfaceDmabufFeedback};
+#[cfg(feature = "debug")]
 use image::GenericImageView;
 #[cfg(feature = "renderer_sync")]
 use smithay::backend::drm::compositor::PrimaryPlaneElement;

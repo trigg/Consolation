@@ -7,33 +7,18 @@ use smithay::{
         },
         ImportAll, ImportMem, Renderer, Texture,
     },
-    desktop::{
-        space::SpaceElement, utils::OutputPresentationFeedback, Window, WindowSurface,
-        WindowSurfaceType,
-    },
-    input::{
-        pointer::{
-            AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent,
-            GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent,
-            GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, MotionEvent,
-            PointerTarget, RelativeMotionEvent,
-        },
-        touch::TouchTarget,
-        Seat,
-    },
+    desktop::{utils::OutputPresentationFeedback, Window},
     output::Output,
     reexports::{
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::protocol::wl_surface::WlSurface,
     },
     render_elements,
-    utils::{user_data::UserDataMap, IsAlive, Logical, Physical, Point, Scale, Serial},
+    utils::{user_data::UserDataMap, IsAlive, Physical, Point, Scale},
     wayland::{
         compositor::SurfaceData as WlSurfaceData, dmabuf::DmabufFeedback, seat::WaylandFocus,
     },
 };
-
-use crate::{focus::PointerFocusTarget, state::Backend, AnvilState};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WindowElement(pub Window);
@@ -161,12 +146,10 @@ where
     fn render_elements<C: From<Self::RenderElement>>(
         &self,
         renderer: &mut R,
-        mut location: Point<i32, Physical>,
+        location: Point<i32, Physical>,
         scale: Scale<f64>,
         alpha: f32,
     ) -> Vec<C> {
-        let window_bbox = SpaceElement::bbox(&self.0);
-
         AsRenderElements::render_elements(&self.0, renderer, location, scale, alpha)
             .into_iter()
             .map(C::from)

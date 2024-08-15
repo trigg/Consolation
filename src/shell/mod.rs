@@ -15,7 +15,7 @@ use smithay::{
             Client, Resource,
         },
     },
-    utils::{IsAlive, Logical, Point, Rectangle},
+    utils::{IsAlive, Logical, Rectangle},
     wayland::{
         buffer::BufferHandler,
         compositor::{
