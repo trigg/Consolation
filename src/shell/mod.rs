@@ -299,13 +299,6 @@ fn ensure_initial_configure(
     };
 }
 
-fn place_new_window(
-    elements: &mut Vec<Window>,
-    _pointer_location: Point<f64, Logical>,
-    window: &Window,
-    _activate: bool,
-) {
+fn place_new_window(elements: &mut Vec<Window>, window: &Window) {
     elements.insert(0, window.clone());
-
-    //space.map_element(window.clone(), (x, y), activate);
 }

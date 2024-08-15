@@ -1,22 +1,26 @@
 use smithay::{
-    backend::renderer::{
-        damage::{Error as OutputDamageTrackerError, OutputDamageTracker, RenderOutputResult},
-        element::{
-            surface::WaylandSurfaceRenderElement,
-            utils::{
-                constrain_as_render_elements, ConstrainAlign, ConstrainScaleBehavior,
-                CropRenderElement, RelocateRenderElement, RescaleRenderElement,
+    backend::{
+        renderer::{
+            damage::{Error as OutputDamageTrackerError, OutputDamageTracker, RenderOutputResult},
+            element::{
+                self,
+                surface::WaylandSurfaceRenderElement,
+                utils::{
+                    constrain_as_render_elements, ConstrainAlign, ConstrainScaleBehavior,
+                    CropRenderElement, RelocateRenderElement, RescaleRenderElement,
+                },
+                AsRenderElements, RenderElement, Wrap,
             },
-            AsRenderElements, RenderElement, Wrap,
+            ImportAll, ImportMem, Renderer,
         },
-        ImportAll, ImportMem, Renderer,
+        x11::X11Surface,
     },
     desktop::{
         space::{ConstrainBehavior, ConstrainReference, SpaceRenderElements},
         LayerSurface, Window,
     },
     output::Output,
-    utils::{Rectangle, Scale},
+    utils::{Logical, Point, Rectangle, Scale},
     wayland::shell::wlr_layer::Layer,
 };
 
@@ -74,17 +78,15 @@ impl<R: Renderer + ImportAll + ImportMem, E: RenderElement<R> + std::fmt::Debug>
     }
 }
 
-pub fn render_window<'a, R, C>(
-    renderer: &'a mut R,
-    zone: Rectangle<i32, smithay::utils::Logical>,
+pub fn get_window_scales(
     window: Window,
-) -> impl Iterator<Item = C> + 'a
-where
-    R: Renderer + ImportAll + ImportMem,
-    R::TextureId: Clone + 'static,
-    C: From<CropRenderElement<RelocateRenderElement<RescaleRenderElement<WindowRenderElement<R>>>>>
-        + 'a,
-{
+    zone: Rectangle<i32, smithay::utils::Logical>,
+) -> (
+    Rectangle<i32, Logical>,
+    Point<i32, Logical>,
+    Rectangle<i32, Logical>,
+    ConstrainBehavior,
+) {
     let behavior = ConstrainBehavior {
         reference: ConstrainReference::BoundingBox,
         behavior: ConstrainScaleBehavior::Fit,
@@ -92,24 +94,57 @@ where
     };
 
     let constrain = zone;
-    let wele = WindowElement(window);
 
     let location = zone.loc;
 
-    let scale_reference = wele.0.bbox();
+    let scale_reference = window.bbox();
+    (constrain, location, scale_reference, behavior)
+}
 
-    constrain_as_render_elements(
-        &wele,
-        renderer,
-        (location - scale_reference.loc).to_physical_precise_round(1.0),
-        1.0,
-        constrain.to_physical_precise_round(1.0),
-        scale_reference.to_physical_precise_round(1.0),
-        behavior.behavior,
-        behavior.align,
-        1.0,
-    )
-    .into_iter()
+pub fn render_window<'a, R, C>(
+    renderer: &'a mut R,
+    window: Window,
+    constrain: Rectangle<i32, Logical>,
+    location: Point<i32, Logical>,
+    mut scale_reference: Rectangle<i32, Logical>,
+    behavior: ConstrainBehavior,
+) -> impl Iterator<Item = C> + 'a
+where
+    R: Renderer + ImportAll + ImportMem,
+    R::TextureId: Clone + 'static,
+    C: From<CropRenderElement<RelocateRenderElement<RescaleRenderElement<WindowRenderElement<R>>>>>
+        + 'a,
+{
+    let wele = WindowElement(window.clone());
+    if window.is_x11() && window.x11_surface().unwrap().is_override_redirect() {
+        let geo = window.x11_surface().unwrap().geometry();
+        scale_reference.loc -= geo.loc;
+        constrain_as_render_elements(
+            &wele,
+            renderer,
+            (location - scale_reference.loc).to_physical_precise_round(1.0),
+            1.0,
+            constrain.to_physical_precise_round(1.0),
+            scale_reference.to_physical_precise_round(1.0),
+            behavior.behavior,
+            behavior.align,
+            1.0,
+        )
+        .into_iter()
+    } else {
+        constrain_as_render_elements(
+            &wele,
+            renderer,
+            (location - scale_reference.loc).to_physical_precise_round(1.0),
+            1.0,
+            constrain.to_physical_precise_round(1.0),
+            scale_reference.to_physical_precise_round(1.0),
+            behavior.behavior,
+            behavior.align,
+            1.0,
+        )
+        .into_iter()
+    }
 }
 
 #[profiling::function]
@@ -172,9 +207,53 @@ where
         lower
     };
 
-    // Draw top application here
-    if let Some(window) = elements.get(0) {
-        render_elements.extend(render_window(renderer, non_exclusion_zone, window.clone()));
+    // Draw application here
+    // Collect windows from the 0th index on until we hit a real one.
+    // For wayland applications, this should only result in 0th
+    // For X11 applications, this will result in popups first then the actual application
+
+    let mut popups = vec![];
+    let mut window = None;
+    for element in elements {
+        if element.is_wayland() {
+            window = Some(element.clone());
+            break;
+        } else {
+            match element.x11_surface() {
+                Some(x11surface) => {
+                    if x11surface.is_override_redirect() {
+                        popups.push(element.clone());
+                    } else {
+                        window = Some(element.clone());
+                        break;
+                    }
+                }
+                None => {}
+            }
+        }
+    }
+    if let Some(window) = window {
+        let (constrain, location, scale_reference, behavior) =
+            get_window_scales(window.clone(), non_exclusion_zone);
+
+        for popup in popups {
+            render_elements.extend(render_window(
+                renderer,
+                popup,
+                constrain,
+                location,
+                scale_reference,
+                behavior,
+            ));
+        }
+        render_elements.extend(render_window(
+            renderer,
+            window,
+            constrain,
+            location,
+            scale_reference,
+            behavior,
+        ));
     }
 
     // Render Bottom and Background LayerShells

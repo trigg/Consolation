@@ -19,7 +19,7 @@ and the binary will be in
 
 `consolation`
 
-Consolation will autodetect an X11 or Wayland environment and fall back to drawing with the winit backend if needed.
+Consolation is designed to run directly from TTY or from a login manager, it cannot be used nested inside another compositor
 
 ### Debug
 
@@ -30,11 +30,12 @@ Consolation will autodetect an X11 or Wayland environment and fall back to drawi
 Currently this is not as feature complete as hoped. More to come soon!
 
 - One window focused at a time
-- - ~~Pop ups kept to parent scale~~
+- - Pop ups kept to parent scale
 - Window aspect-scaled to fit display
 - 'Menu' key or 'Alt Gr' used to open menu.
 - - Arrow keys navigate options, Enter to select, Backspace to go back
 - - Switch between active windows
 - - More settings & controls to come
 - wlroots layer shell to allow overlays, popups, and panels
+- - Due to choices in the way the input is handled, currently panels & popups cannot be interacted with (click, touch, type).
 

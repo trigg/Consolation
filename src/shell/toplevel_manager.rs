@@ -138,7 +138,8 @@ where
                         .lock()
                         .unwrap();
                     let output = state.outputs.get(0);
-                    refresh_toplevel::<D>(protocol_state, &wl_surface, &role, output, focus);
+                    focus =
+                        refresh_toplevel::<D>(protocol_state, &wl_surface, &role, output, focus);
                 });
             }
         }
@@ -254,11 +255,16 @@ fn refresh_toplevel<D>(
     role: &XdgToplevelSurfaceRoleAttributes,
     output: Option<&Output>,
     has_focus: bool,
-) where
+) -> bool
+where
     D: Backend + 'static,
 {
-    let states = to_state_vec(&role.current.states, has_focus);
+    let mut has_focus = has_focus;
 
+    let states = to_state_vec(&role.current.states, has_focus);
+    if role.title.is_none() || role.title.clone().unwrap() != "nil" {
+        has_focus = false;
+    }
     match protocol_state.toplevels.entry(wl_surface.clone()) {
         Entry::Occupied(entry) => {
             // Existing window, check if anything changed.
@@ -351,6 +357,7 @@ fn refresh_toplevel<D>(
             entry.insert(data);
         }
     }
+    has_focus
 }
 
 impl ToplevelData {

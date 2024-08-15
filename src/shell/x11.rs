@@ -57,12 +57,7 @@ impl<BackendData: Backend> XwmHandler for AnvilState<BackendData> {
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
         window.set_mapped(true).unwrap();
         let window = Window::new_x11_window(window);
-        place_new_window(
-            &mut self.elements,
-            self.pointer.current_location(),
-            &window,
-            true,
-        );
+        place_new_window(&mut self.elements, &window);
         let bbox = window.bbox();
         let Some(xsurface) = window.x11_surface() else {
             unreachable!()
@@ -74,6 +69,7 @@ impl<BackendData: Backend> XwmHandler for AnvilState<BackendData> {
 
     fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
         let window = Window::new_x11_window(window);
+        place_new_window(&mut self.elements, &window);
         self.raise_window(&window);
     }
 
@@ -350,92 +346,6 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         self.map_window(&elem);
     }
 
-    pub fn move_request_x11(&mut self, _window: &X11Surface) {
-        /*
-        if let Some(touch) = self.seat.get_touch() {
-            if let Some(start_data) = touch.grab_start_data() {
-                let element = self
-                    .space
-                    .elements()
-                    .find(|e| matches!(e.0.x11_surface(), Some(w) if w == window));
-
-                if let Some(element) = element {
-                    let mut initial_window_location = self.space.element_location(element).unwrap();
-
-                    // If surface is maximized then unmaximize it
-                    if window.is_maximized() {
-                        window.set_maximized(false).unwrap();
-                        let pos = start_data.location;
-                        initial_window_location = (pos.x as i32, pos.y as i32).into();
-                        if let Some(old_geo) = window
-                            .user_data()
-                            .get::<OldGeometry>()
-                            .and_then(|data| data.restore())
-                        {
-                            window
-                                .configure(Rectangle::from_loc_and_size(
-                                    initial_window_location,
-                                    old_geo.size,
-                                ))
-                                .unwrap();
-                        }
-                    }
-
-                    let grab = TouchMoveSurfaceGrab {
-                        start_data,
-                        window: element.clone(),
-                        initial_window_location,
-                    };
-
-                    touch.set_grab(self, grab, SERIAL_COUNTER.next_serial());
-                    return;
-                }
-            }
-        }
-
-
-        // luckily anvil only supports one seat anyway...
-        let Some(start_data) = self.pointer.grab_start_data() else {
-            return;
-        };
-
-        let Some(element) = self
-            .space
-            .elements()
-            .find(|e| matches!(e.0.x11_surface(), Some(w) if w == window))
-        else {
-            return;
-        };
-
-        let mut initial_window_location = self.space.element_location(element).unwrap();
-
-        // If surface is maximized then unmaximize it
-        if window.is_maximized() {
-            window.set_maximized(false).unwrap();
-            let pos = self.pointer.current_location();
-            initial_window_location = (pos.x as i32, pos.y as i32).into();
-            if let Some(old_geo) = window
-                .user_data()
-                .get::<OldGeometry>()
-                .and_then(|data| data.restore())
-            {
-                window
-                    .configure(Rectangle::from_loc_and_size(
-                        initial_window_location,
-                        old_geo.size,
-                    ))
-                    .unwrap();
-            }
-        }
-
-        let grab = PointerMoveSurfaceGrab {
-            start_data,
-            window: element.clone(),
-            initial_window_location,
-        };
-
-        let pointer = self.pointer.clone();
-        pointer.set_grab(self, grab, SERIAL_COUNTER.next_serial(), Focus::Clear);
-        */
-    }
+    /* Move window by D&D. We do not support it as window positions do not exist */
+    pub fn move_request_x11(&mut self, _window: &X11Surface) {}
 }

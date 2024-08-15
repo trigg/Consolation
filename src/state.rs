@@ -876,7 +876,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             if let Some(xwindow) = window.x11_surface() {
                 let _res = xwindow.close();
             }
-        } else if window.is_wayland() {
+        } else {
             if let Some(toplevel) = window.toplevel() {
                 toplevel.send_close();
             }

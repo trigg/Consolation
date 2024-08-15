@@ -13,6 +13,7 @@ use crate::{
     state::{post_repaint, take_presentation_feedback, AnvilState, Backend},
 };
 use crate::{shell::toplevel_manager, state::SurfaceDmabufFeedback};
+use image::GenericImageView;
 #[cfg(feature = "renderer_sync")]
 use smithay::backend::drm::compositor::PrimaryPlaneElement;
 #[cfg(feature = "egl")]
@@ -1688,11 +1689,25 @@ fn render_surface<'a>(
 
     let mut custom_elements: Vec<CustomRenderElements<_>> = Vec::new();
 
-    let (scale, offset) = if let Some(window) = window_elements.iter().nth(0) {
+    let mut maybe_window = None;
+
+    for element in window_elements {
+        if element.is_wayland() {
+            maybe_window = Some(element.clone());
+            break;
+        }
+        if let Some(x11surf) = element.x11_surface() {
+            if !x11surf.is_override_redirect() {
+                maybe_window = Some(element.clone());
+                break;
+            }
+        }
+    }
+
+    let (scale, offset) = if let Some(window) = maybe_window {
         let layer_map = smithay::desktop::layer_map_for_output(output);
         let constrain = layer_map.non_exclusive_zone().size.to_f64();
         let reference = window.bbox().size.to_f64();
-        //let constrain = output.current_mode().unwrap().size.to_f64();
 
         let mouse_scale: Scale<f64> = constrain / reference;
         let mouse_scale = Scale::from(f64::min(mouse_scale.x, mouse_scale.y));

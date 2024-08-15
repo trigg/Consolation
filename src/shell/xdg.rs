@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use smithay::{
-    desktop::{PopupKind, Window},
+    desktop::{find_popup_root_surface, PopupKind, Window},
     input::Seat,
     output::Output,
     reexports::{
@@ -41,12 +41,7 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
         // of a xdg_surface has to be sent during the commit if
         // the surface is not already configured
         let window = Window::new_wayland_window(surface.clone());
-        place_new_window(
-            &mut self.elements,
-            self.pointer.current_location(),
-            &window,
-            true,
-        );
+        place_new_window(&mut self.elements, &window);
 
         compositor::add_post_commit_hook(surface.wl_surface(), |state: &mut Self, _, surface| {
             handle_toplevel_commit(&mut state.elements, surface);
@@ -60,7 +55,7 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
         // of a xdg_surface has to be sent during the commit if
         // the surface is not already configured
 
-        self.unconstrain_popup(&surface);
+        self.constrain_popup(&surface);
 
         if let Err(err) = self.popups.track_popup(PopupKind::from(surface)) {
             warn!("Failed to track popup: {}", err);
@@ -78,7 +73,7 @@ impl<BackendData: Backend> XdgShellHandler for AnvilState<BackendData> {
             state.geometry = geometry;
             state.positioner = positioner;
         });
-        self.unconstrain_popup(&surface);
+        self.constrain_popup(&surface);
         surface.send_repositioned(token);
     }
 
@@ -468,139 +463,9 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         _seat: &Seat<Self>,
         _serial: Serial,
     ) {
-        /*
-        if let Some(touch) = seat.get_touch() {
-            if touch.has_grab(serial) {
-                let start_data = touch.grab_start_data().unwrap();
-
-                // If the client disconnects after requesting a move
-                // we can just ignore the request
-                let Some(window) = self.window_for_surface(surface.wl_surface()) else {
-                    return;
-                };
-
-                // If the focus was for a different surface, ignore the request.
-                if start_data.focus.is_none()
-                    || !start_data
-                        .focus
-                        .as_ref()
-                        .unwrap()
-                        .0
-                        .same_client_as(&surface.wl_surface().id())
-                {
-                    return;
-                }
-
-                let mut initial_window_location = self.space.element_location(&window).unwrap();
-
-                // If surface is maximized then unmaximize it
-                let current_state = surface.current_state();
-                if current_state
-                    .states
-                    .contains(xdg_toplevel::State::Maximized)
-                {
-                    surface.with_pending_state(|state| {
-                        state.states.unset(xdg_toplevel::State::Maximized);
-                        state.size = None;
-                    });
-
-                    surface.send_configure();
-
-                    // NOTE: In real compositor mouse location should be mapped to a new window size
-                    // For example, you could:
-                    // 1) transform mouse pointer position from compositor space to window space (location relative)
-                    // 2) divide the x coordinate by width of the window to get the percentage
-                    //   - 0.0 would be on the far left of the window
-                    //   - 0.5 would be in middle of the window
-                    //   - 1.0 would be on the far right of the window
-                    // 3) multiply the percentage by new window width
-                    // 4) by doing that, drag will look a lot more natural
-                    //
-                    // but for anvil needs setting location to pointer location is fine
-                    initial_window_location = start_data.location.to_i32_round();
-                }
-
-                let grab = TouchMoveSurfaceGrab {
-                    start_data,
-                    window,
-                    initial_window_location,
-                };
-
-                touch.set_grab(self, grab, serial);
-                return;
-            }
-        }
-
-        let pointer = seat.get_pointer().unwrap();
-
-        // Check that this surface has a click grab.
-        if !pointer.has_grab(serial) {
-            return;
-        }
-
-        let start_data = pointer.grab_start_data().unwrap();
-
-        // If the client disconnects after requesting a move
-        // we can just ignore the request
-        let Some(window) = self.window_for_surface(surface.wl_surface()) else {
-            return;
-        };
-
-        // If the focus was for a different surface, ignore the request.
-        if start_data.focus.is_none()
-            || !start_data
-                .focus
-                .as_ref()
-                .unwrap()
-                .0
-                .same_client_as(&surface.wl_surface().id())
-        {
-            return;
-        }
-
-        let mut initial_window_location = self.space.element_location(&window).unwrap();
-
-        // If surface is maximized then unmaximize it
-        let current_state = surface.current_state();
-        if current_state
-            .states
-            .contains(xdg_toplevel::State::Maximized)
-        {
-            surface.with_pending_state(|state| {
-                state.states.unset(xdg_toplevel::State::Maximized);
-                state.size = None;
-            });
-
-            surface.send_configure();
-
-            // NOTE: In real compositor mouse location should be mapped to a new window size
-            // For example, you could:
-            // 1) transform mouse pointer position from compositor space to window space (location relative)
-            // 2) divide the x coordinate by width of the window to get the percentage
-            //   - 0.0 would be on the far left of the window
-            //   - 0.5 would be in middle of the window
-            //   - 1.0 would be on the far right of the window
-            // 3) multiply the percentage by new window width
-            // 4) by doing that, drag will look a lot more natural
-            //
-            // but for anvil needs setting location to pointer location is fine
-            let pos = pointer.current_location();
-            initial_window_location = (pos.x as i32, pos.y as i32).into();
-        }
-
-        let grab = PointerMoveSurfaceGrab {
-            start_data,
-            window,
-            initial_window_location,
-        };
-
-        pointer.set_grab(self, grab, serial, Focus::Clear);
-        */
     }
 
-    fn unconstrain_popup(&self, _popup: &PopupSurface) {
-        unimplemented!();
-        /*
+    fn constrain_popup(&self, popup: &PopupSurface) {
         let Ok(root) = find_popup_root_surface(&PopupKind::Xdg(popup.clone())) else {
             return;
         };
@@ -608,27 +473,11 @@ impl<BackendData: Backend> AnvilState<BackendData> {
             return;
         };
 
-        // Get a union of all outputs' geometries.
-        let mut outputs_geo = self
-            .space
-            .output_geometry(&outputs_for_window.pop().unwrap())
-            .unwrap();
-        for output in outputs_for_window {
-            outputs_geo = outputs_geo.merge(self.space.output_geometry(&output).unwrap());
-        }
-
-        let window_geo = self.space.element_geometry(&window).unwrap();
-
-        // The target geometry for the positioner should be relative to its parent's geometry, so
-        // we will compute that here.
-        let mut target = outputs_geo;
-        target.loc -= get_popup_toplevel_coords(&PopupKind::Xdg(popup.clone()));
-        target.loc -= window_geo.loc;
+        let target = window.bbox();
 
         popup.with_pending_state(|state| {
             state.geometry = state.positioner.get_unconstrained_geometry(target);
         });
-        */
     }
 }
 
