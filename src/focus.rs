@@ -27,7 +27,7 @@ use smithay::{
 };
 
 use crate::{
-    shell::{WindowElement, SSD},
+    shell::WindowElement,
     state::{AnvilState, Backend},
 };
 
@@ -54,7 +54,6 @@ pub enum PointerFocusTarget {
     WlSurface(WlSurface),
     #[cfg(feature = "xwayland")]
     X11Surface(X11Surface),
-    SSD(SSD),
 }
 
 impl IsAlive for PointerFocusTarget {
@@ -64,7 +63,6 @@ impl IsAlive for PointerFocusTarget {
             PointerFocusTarget::WlSurface(w) => w.alive(),
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(w) => w.alive(),
-            PointerFocusTarget::SSD(x) => x.alive(),
         }
     }
 }
@@ -87,7 +85,6 @@ impl<BackendData: Backend> PointerTarget<AnvilState<BackendData>> for PointerFoc
             PointerFocusTarget::WlSurface(w) => PointerTarget::enter(w, seat, data, event),
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(w) => PointerTarget::enter(w, seat, data, event),
-            PointerFocusTarget::SSD(w) => PointerTarget::enter(w, seat, data, event),
         }
     }
     fn motion(
@@ -100,7 +97,6 @@ impl<BackendData: Backend> PointerTarget<AnvilState<BackendData>> for PointerFoc
             PointerFocusTarget::WlSurface(w) => PointerTarget::motion(w, seat, data, event),
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(w) => PointerTarget::motion(w, seat, data, event),
-            PointerFocusTarget::SSD(w) => PointerTarget::motion(w, seat, data, event),
         }
     }
     fn relative_motion(
@@ -117,7 +113,6 @@ impl<BackendData: Backend> PointerTarget<AnvilState<BackendData>> for PointerFoc
             PointerFocusTarget::X11Surface(w) => {
                 PointerTarget::relative_motion(w, seat, data, event)
             }
-            PointerFocusTarget::SSD(w) => PointerTarget::relative_motion(w, seat, data, event),
         }
     }
     fn button(
@@ -130,7 +125,6 @@ impl<BackendData: Backend> PointerTarget<AnvilState<BackendData>> for PointerFoc
             PointerFocusTarget::WlSurface(w) => PointerTarget::button(w, seat, data, event),
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(w) => PointerTarget::button(w, seat, data, event),
-            PointerFocusTarget::SSD(w) => PointerTarget::button(w, seat, data, event),
         }
     }
     fn axis(
@@ -143,7 +137,6 @@ impl<BackendData: Backend> PointerTarget<AnvilState<BackendData>> for PointerFoc
             PointerFocusTarget::WlSurface(w) => PointerTarget::axis(w, seat, data, frame),
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(w) => PointerTarget::axis(w, seat, data, frame),
-            PointerFocusTarget::SSD(w) => PointerTarget::axis(w, seat, data, frame),
         }
     }
     fn frame(&self, seat: &Seat<AnvilState<BackendData>>, data: &mut AnvilState<BackendData>) {
@@ -151,7 +144,6 @@ impl<BackendData: Backend> PointerTarget<AnvilState<BackendData>> for PointerFoc
             PointerFocusTarget::WlSurface(w) => PointerTarget::frame(w, seat, data),
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(w) => PointerTarget::frame(w, seat, data),
-            PointerFocusTarget::SSD(w) => PointerTarget::frame(w, seat, data),
         }
     }
     fn leave(
@@ -165,7 +157,6 @@ impl<BackendData: Backend> PointerTarget<AnvilState<BackendData>> for PointerFoc
             PointerFocusTarget::WlSurface(w) => PointerTarget::leave(w, seat, data, serial, time),
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(w) => PointerTarget::leave(w, seat, data, serial, time),
-            PointerFocusTarget::SSD(w) => PointerTarget::leave(w, seat, data, serial, time),
         }
     }
     fn gesture_swipe_begin(
@@ -182,7 +173,6 @@ impl<BackendData: Backend> PointerTarget<AnvilState<BackendData>> for PointerFoc
             PointerFocusTarget::X11Surface(w) => {
                 PointerTarget::gesture_swipe_begin(w, seat, data, event)
             }
-            PointerFocusTarget::SSD(w) => PointerTarget::gesture_swipe_begin(w, seat, data, event),
         }
     }
     fn gesture_swipe_update(
@@ -199,7 +189,6 @@ impl<BackendData: Backend> PointerTarget<AnvilState<BackendData>> for PointerFoc
             PointerFocusTarget::X11Surface(w) => {
                 PointerTarget::gesture_swipe_update(w, seat, data, event)
             }
-            PointerFocusTarget::SSD(w) => PointerTarget::gesture_swipe_update(w, seat, data, event),
         }
     }
     fn gesture_swipe_end(
@@ -216,7 +205,6 @@ impl<BackendData: Backend> PointerTarget<AnvilState<BackendData>> for PointerFoc
             PointerFocusTarget::X11Surface(w) => {
                 PointerTarget::gesture_swipe_end(w, seat, data, event)
             }
-            PointerFocusTarget::SSD(w) => PointerTarget::gesture_swipe_end(w, seat, data, event),
         }
     }
     fn gesture_pinch_begin(
@@ -233,7 +221,6 @@ impl<BackendData: Backend> PointerTarget<AnvilState<BackendData>> for PointerFoc
             PointerFocusTarget::X11Surface(w) => {
                 PointerTarget::gesture_pinch_begin(w, seat, data, event)
             }
-            PointerFocusTarget::SSD(w) => PointerTarget::gesture_pinch_begin(w, seat, data, event),
         }
     }
     fn gesture_pinch_update(
@@ -250,7 +237,6 @@ impl<BackendData: Backend> PointerTarget<AnvilState<BackendData>> for PointerFoc
             PointerFocusTarget::X11Surface(w) => {
                 PointerTarget::gesture_pinch_update(w, seat, data, event)
             }
-            PointerFocusTarget::SSD(w) => PointerTarget::gesture_pinch_update(w, seat, data, event),
         }
     }
     fn gesture_pinch_end(
@@ -267,7 +253,6 @@ impl<BackendData: Backend> PointerTarget<AnvilState<BackendData>> for PointerFoc
             PointerFocusTarget::X11Surface(w) => {
                 PointerTarget::gesture_pinch_end(w, seat, data, event)
             }
-            PointerFocusTarget::SSD(w) => PointerTarget::gesture_pinch_end(w, seat, data, event),
         }
     }
     fn gesture_hold_begin(
@@ -284,7 +269,6 @@ impl<BackendData: Backend> PointerTarget<AnvilState<BackendData>> for PointerFoc
             PointerFocusTarget::X11Surface(w) => {
                 PointerTarget::gesture_hold_begin(w, seat, data, event)
             }
-            PointerFocusTarget::SSD(w) => PointerTarget::gesture_hold_begin(w, seat, data, event),
         }
     }
     fn gesture_hold_end(
@@ -301,7 +285,6 @@ impl<BackendData: Backend> PointerTarget<AnvilState<BackendData>> for PointerFoc
             PointerFocusTarget::X11Surface(w) => {
                 PointerTarget::gesture_hold_end(w, seat, data, event)
             }
-            PointerFocusTarget::SSD(w) => PointerTarget::gesture_hold_end(w, seat, data, event),
         }
     }
 }
@@ -418,7 +401,6 @@ impl<BackendData: Backend> TouchTarget<AnvilState<BackendData>> for PointerFocus
             PointerFocusTarget::WlSurface(w) => TouchTarget::down(w, seat, data, event, seq),
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(w) => TouchTarget::down(w, seat, data, event, seq),
-            PointerFocusTarget::SSD(w) => TouchTarget::down(w, seat, data, event, seq),
         }
     }
 
@@ -433,7 +415,6 @@ impl<BackendData: Backend> TouchTarget<AnvilState<BackendData>> for PointerFocus
             PointerFocusTarget::WlSurface(w) => TouchTarget::up(w, seat, data, event, seq),
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(w) => TouchTarget::up(w, seat, data, event, seq),
-            PointerFocusTarget::SSD(w) => TouchTarget::up(w, seat, data, event, seq),
         }
     }
 
@@ -448,7 +429,6 @@ impl<BackendData: Backend> TouchTarget<AnvilState<BackendData>> for PointerFocus
             PointerFocusTarget::WlSurface(w) => TouchTarget::motion(w, seat, data, event, seq),
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(w) => TouchTarget::motion(w, seat, data, event, seq),
-            PointerFocusTarget::SSD(w) => TouchTarget::motion(w, seat, data, event, seq),
         }
     }
 
@@ -462,7 +442,6 @@ impl<BackendData: Backend> TouchTarget<AnvilState<BackendData>> for PointerFocus
             PointerFocusTarget::WlSurface(w) => TouchTarget::frame(w, seat, data, seq),
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(w) => TouchTarget::frame(w, seat, data, seq),
-            PointerFocusTarget::SSD(w) => TouchTarget::frame(w, seat, data, seq),
         }
     }
 
@@ -476,7 +455,6 @@ impl<BackendData: Backend> TouchTarget<AnvilState<BackendData>> for PointerFocus
             PointerFocusTarget::WlSurface(w) => TouchTarget::cancel(w, seat, data, seq),
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(w) => TouchTarget::cancel(w, seat, data, seq),
-            PointerFocusTarget::SSD(w) => TouchTarget::cancel(w, seat, data, seq),
         }
     }
 
@@ -491,7 +469,6 @@ impl<BackendData: Backend> TouchTarget<AnvilState<BackendData>> for PointerFocus
             PointerFocusTarget::WlSurface(w) => TouchTarget::shape(w, seat, data, event, seq),
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(w) => TouchTarget::shape(w, seat, data, event, seq),
-            PointerFocusTarget::SSD(w) => TouchTarget::shape(w, seat, data, event, seq),
         }
     }
 
@@ -508,7 +485,6 @@ impl<BackendData: Backend> TouchTarget<AnvilState<BackendData>> for PointerFocus
             PointerFocusTarget::X11Surface(w) => {
                 TouchTarget::orientation(w, seat, data, event, seq)
             }
-            PointerFocusTarget::SSD(w) => TouchTarget::orientation(w, seat, data, event, seq),
         }
     }
 }
@@ -520,7 +496,6 @@ impl WaylandFocus for PointerFocusTarget {
             PointerFocusTarget::WlSurface(w) => w.wl_surface(),
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(w) => w.wl_surface().map(Cow::Owned),
-            PointerFocusTarget::SSD(_) => None,
         }
     }
     #[inline]
@@ -529,10 +504,6 @@ impl WaylandFocus for PointerFocusTarget {
             PointerFocusTarget::WlSurface(w) => w.same_client_as(object_id),
             #[cfg(feature = "xwayland")]
             PointerFocusTarget::X11Surface(w) => w.same_client_as(object_id),
-            PointerFocusTarget::SSD(w) => w
-                .wl_surface()
-                .map(|surface| surface.same_client_as(object_id))
-                .unwrap_or(false),
         }
     }
 }
