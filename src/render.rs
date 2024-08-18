@@ -23,7 +23,7 @@ use smithay::{
 #[cfg(feature = "debug")]
 use crate::drawing::FpsElement;
 use crate::{
-    drawing::{PointerRenderElement, CLEAR_COLOR},
+    drawing::{BackgroundElement, PointerRenderElement, CLEAR_COLOR},
     shell::{WindowElement, WindowRenderElement},
 };
 
@@ -38,6 +38,7 @@ smithay::backend::renderer::element::render_elements! {
     // as the whole type changes and we can't have an unused lifetime (for when "debug" is disabled)
     // in the declaration.
     Fps=FpsElement<<R as Renderer>::TextureId>,
+    Background=BackgroundElement<<R as Renderer>::TextureId>,
 }
 
 impl<R: Renderer> std::fmt::Debug for CustomRenderElements<R> {
@@ -47,6 +48,7 @@ impl<R: Renderer> std::fmt::Debug for CustomRenderElements<R> {
             Self::Surface(arg0) => f.debug_tuple("Surface").field(arg0).finish(),
             #[cfg(feature = "debug")]
             Self::Fps(arg0) => f.debug_tuple("Fps").field(arg0).finish(),
+            Self::Background(arg0) => f.debug_tuple("Background").field(arg0).finish(),
             Self::_GenericCatcher(arg0) => f.debug_tuple("_GenericCatcher").field(arg0).finish(),
         }
     }
@@ -148,6 +150,7 @@ pub fn output_elements<R>(
     output: &Output,
     elements: &Vec<Window>,
     custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
+    background_element: Option<CustomRenderElements<R>>,
     renderer: &mut R,
 ) -> (
     Vec<OutputRenderElements<R, WindowRenderElement<R>>>,
@@ -276,6 +279,10 @@ where
             }),
     );
 
+    if let Some(background_element) = background_element {
+        render_elements.push(OutputRenderElements::from(background_element));
+    }
+
     (render_elements, CLEAR_COLOR)
 }
 
@@ -284,6 +291,7 @@ pub fn render_output<'a, 'd, R>(
     output: &'a Output,
     elements: &Vec<Window>,
     custom_elements: impl IntoIterator<Item = CustomRenderElements<R>>,
+    background_element: Option<CustomRenderElements<R>>,
     renderer: &'a mut R,
     damage_tracker: &'d mut OutputDamageTracker,
     age: usize,
@@ -292,7 +300,13 @@ where
     R: Renderer + ImportAll + ImportMem,
     R::TextureId: Clone + 'static,
 {
-    let (elements, clear_color) = output_elements(output, elements, custom_elements, renderer);
+    let (elements, clear_color) = output_elements(
+        output,
+        elements,
+        custom_elements,
+        background_element,
+        renderer,
+    );
 
     damage_tracker.render_output(renderer, age, &elements, clear_color)
 }

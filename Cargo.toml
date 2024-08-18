@@ -34,7 +34,7 @@ gl_generator = "0.14"
 
 [features]
 debug = [ "fps_ticker", "image/png", "renderdoc" ]
-default = [ "udev", "egl", "xwayland", "image/png"]
+default = [ "udev", "egl", "xwayland", "image/png", "debug"]
 egl = [ "smithay/use_system_lib", "smithay/backend_egl" ]
 udev = [
   "smithay-drm-extras",

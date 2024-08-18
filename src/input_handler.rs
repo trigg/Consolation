@@ -1030,6 +1030,7 @@ enum KeyAction {
     Select,
     Back,
     /// Do nothing more
+    NextMode,
     None,
 }
 
@@ -1052,6 +1053,8 @@ fn process_keyboard_shortcut(modifiers: ModifiersState, keysym: Keysym) -> Optio
         Some(KeyAction::Run("consolation-switcher".into()))
     } else if modifiers.logo && modifiers.shift && keysym == Keysym::T {
         Some(KeyAction::ToggleTint)
+    } else if modifiers.logo && modifiers.shift && keysym == Keysym::P {
+        Some(KeyAction::NextMode)
     } else {
         None
     }

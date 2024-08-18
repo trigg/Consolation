@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     os::unix::io::OwnedFd,
     sync::{atomic::AtomicBool, Arc},
     time::Duration,
@@ -7,8 +8,14 @@ use std::{
 use tracing::{info, warn};
 
 use crate::{
-    delegate_foreign_toplevel,
-    shell::toplevel_manager::{ForeignToplevelHandler, ForeignToplevelManagerState},
+    delegate_foreign_toplevel, delegate_output_management,
+    shell::{
+        output_manager::{
+            self, OutputId, OutputManagementHandler, OutputManagementManagerState, Outputs,
+        },
+        toplevel_manager::{ForeignToplevelHandler, ForeignToplevelManagerState},
+    },
+    udev::UdevData,
 };
 use smithay::{
     backend::{
@@ -145,6 +152,8 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     pub elements: Vec<Window>,
     pub popups: PopupManager,
 
+    pub output_states: HashMap<OutputId, crate::shell::output_manager::Output>,
+
     // smithay state
     pub compositor_state: CompositorState,
     pub data_device_state: DataDeviceState,
@@ -162,6 +171,7 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     pub presentation_state: PresentationState,
     pub fractional_scale_manager_state: FractionalScaleManagerState,
     pub xdg_foreign_state: XdgForeignState,
+    pub output_management_state: OutputManagementManagerState,
     #[cfg(feature = "xwayland")]
     pub xwayland_shell_state: xwayland_shell::XWaylandShellState,
 
@@ -357,6 +367,8 @@ delegate_pointer_gestures!(@<BackendData: Backend + 'static> AnvilState<BackendD
 delegate_relative_pointer!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
 
 delegate_foreign_toplevel!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
+
+delegate_output_management!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
 
 impl<BackendData: Backend> PointerConstraintsHandler for AnvilState<BackendData> {
     fn new_constraint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>) {
@@ -561,9 +573,78 @@ delegate_xwayland_keyboard_grab!(@<BackendData: Backend + 'static> AnvilState<Ba
 #[cfg(feature = "xwayland")]
 delegate_xwayland_shell!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
 
+impl<BackendData: Backend> AnvilState<BackendData> {
+    pub fn get_output_for_name(
+        &mut self,
+        name: &String,
+    ) -> Option<(Output, output_manager::Output)> {
+        let mut output_state = None;
+        for (_key, value) in self.output_states.iter() {
+            if value.name == *name {
+                output_state = Some((value.clone()));
+                break;
+            }
+        }
+        if output_state.is_none() {
+            return None;
+        }
+        for output in self.outputs.clone() {
+            if output.name() == *name {
+                return Some((output.clone(), output_state.unwrap()));
+            }
+        }
+        None
+    }
+}
+
 impl<BackendData: Backend> XdgForeignHandler for AnvilState<BackendData> {
     fn xdg_foreign_state(&mut self) -> &mut XdgForeignState {
         &mut self.xdg_foreign_state
+    }
+}
+
+impl<BackendData: Backend> OutputManagementHandler for AnvilState<BackendData> {
+    fn output_management_state(&mut self) -> &mut OutputManagementManagerState {
+        &mut self.output_management_state
+    }
+
+    fn apply_output_config(&mut self, config: Outputs) {
+        for output in config.0 {
+            if let Some((output_actual, output_state)) = self.get_output_for_name(&output.name) {
+                let mut chosen_mode = None;
+                if let Some(output_mode) = output.mode {
+                    /*chosen_mode = Some(smithay::output::Mode {
+                        size: (output_mode.width as i32, output_mode.height as i32).into(),
+                        refresh: output_mode.refresh_rate as i32,
+                    });*/
+                    for mode in output_actual.modes() {
+                        println!(
+                            "Mode check :: {} {} :: {} {} :: {} {}",
+                            mode.size.w,
+                            output_mode.width,
+                            mode.size.h,
+                            output_mode.height,
+                            mode.refresh,
+                            output_mode.refresh_rate
+                        );
+                        if mode.size.w as u16 == output_mode.width
+                            && mode.size.h as u16 == output_mode.height
+                            && mode.refresh == output_mode.refresh_rate as i32
+                        {
+                            chosen_mode = Some(mode);
+                            break;
+                        }
+                    }
+                } else {
+                    println!("Unable to unwrap mode : {:?}", output.mode);
+                }
+                println!("Changing output {:?} mode : {:?}", output.name, chosen_mode);
+                // Scale and location have no function in this compositor
+                // TODO Transform
+                output_actual.change_current_state(chosen_mode, None, None, None);
+            }
+        }
+        //println!("Config changed....{:?}", config);
     }
 }
 smithay::delegate_xdg_foreign!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
@@ -629,6 +710,8 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         let presentation_state = PresentationState::new::<Self>(&dh, clock.id() as u32);
         let fractional_scale_manager_state = FractionalScaleManagerState::new::<Self>(&dh);
         let xdg_foreign_state = XdgForeignState::new::<Self>(&dh);
+        let output_management_manager_state =
+            OutputManagementManagerState::new::<Self, _>(&dh, |_| true);
         TextInputManagerState::new::<Self>(&dh);
         InputMethodManagerState::new::<Self, _>(&dh, |_client| true);
         VirtualKeyboardManagerState::new::<Self, _>(&dh, |_client| true);
@@ -705,6 +788,8 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             #[cfg(feature = "debug")]
             renderdoc: renderdoc::RenderDoc::new().ok(),
             toplevel_manager,
+            output_management_state: output_management_manager_state,
+            output_states: HashMap::new(),
         }
     }
 

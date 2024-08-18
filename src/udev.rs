@@ -10,16 +10,15 @@ use std::{
 use crate::{
     drawing::*,
     render::*,
+    shell::output_manager::{self, OutputId},
     state::{post_repaint, take_presentation_feedback, AnvilState, Backend},
 };
 use crate::{shell::toplevel_manager, state::SurfaceDmabufFeedback};
-#[cfg(feature = "debug")]
 use image::GenericImageView;
 #[cfg(feature = "renderer_sync")]
 use smithay::backend::drm::compositor::PrimaryPlaneElement;
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
-#[cfg(feature = "debug")]
 use smithay::backend::renderer::{multigpu::MultiTexture, ImportMem};
 use smithay::{
     backend::{
@@ -133,6 +132,7 @@ pub struct UdevData {
     pointer_element: PointerElement,
     #[cfg(feature = "debug")]
     fps_texture: Option<MultiTexture>,
+    background_texture: Option<MultiTexture>,
     pointer_image: crate::cursor::Cursor,
     debug_flags: DebugFlags,
     keyboards: Vec<smithay::reexports::input::Device>,
@@ -269,6 +269,7 @@ pub fn run_udev() {
         pointer_element: PointerElement::default(),
         #[cfg(feature = "debug")]
         fps_texture: None,
+        background_texture: None,
         debug_flags: DebugFlags::empty(),
         keyboards: Vec::new(),
     };
@@ -421,6 +422,35 @@ pub fn run_udev() {
             }
         }
         state.backend_data.fps_texture = Some(fps_texture);
+    }
+
+    {
+        let background_image = image::io::Reader::with_format(
+            std::io::Cursor::new(BACKGROUND_PNG),
+            image::ImageFormat::Png,
+        )
+        .decode()
+        .unwrap();
+        let background_texture = renderer
+            .import_memory(
+                &background_image.to_rgba8(),
+                Fourcc::Abgr8888,
+                (
+                    background_image.width() as i32,
+                    background_image.height() as i32,
+                )
+                    .into(),
+                false,
+            )
+            .expect("Unable to upload FPS texture");
+
+        for backend in state.backend_data.backends.values_mut() {
+            for surface in backend.surfaces.values_mut() {
+                surface.background_element =
+                    Some(BackgroundElement::new(background_texture.clone()));
+            }
+        }
+        state.backend_data.background_texture = Some(background_texture);
     }
 
     #[cfg(feature = "egl")]
@@ -817,6 +847,7 @@ struct SurfaceData {
     fps: fps_ticker::Fps,
     #[cfg(feature = "debug")]
     fps_element: Option<FpsElement<MultiTexture>>,
+    background_element: Option<BackgroundElement<MultiTexture>>,
     dmabuf_feedback: Option<DrmSurfaceDmabufFeedback>,
 }
 
@@ -984,6 +1015,22 @@ impl AnvilState<UdevData> {
         Ok(())
     }
 
+    fn output_changed_resolution(&mut self) {
+        let device = if let Some(device) = self
+            .backend_data
+            .backends
+            .get_mut(&self.backend_data.primary_gpu)
+        {
+            device
+        } else {
+            return;
+        };
+        for (connector, crtc) in device.drm_scanner.crtcs() {
+            let surface = device.surfaces.get(&crtc);
+            //let current_crtc_mode = surface.map(|surface| surface.compositor.pending_mode());
+        }
+    }
+
     fn connector_connected(
         &mut self,
         node: DrmNode,
@@ -1074,15 +1121,18 @@ impl AnvilState<UdevData> {
 
             let (phys_w, phys_h) = connector.size().unwrap_or((0, 0));
             let output = Output::new(
-                output_name,
+                output_name.clone(),
                 PhysicalProperties {
                     size: (phys_w as i32, phys_h as i32).into(),
                     subpixel: connector.subpixel().into(),
-                    make,
-                    model,
+                    make: make.clone(),
+                    model: model.clone(),
                 },
             );
             let global = output.create_global::<AnvilState<UdevData>>(&self.display_handle);
+            for mode in connector.modes() {
+                output.add_mode(WlMode::from(*mode));
+            }
             output.set_preferred(wl_mode);
             output.change_current_state(Some(wl_mode), None, None, None);
             self.outputs.push(output.clone());
@@ -1093,6 +1143,11 @@ impl AnvilState<UdevData> {
 
             #[cfg(feature = "debug")]
             let fps_element = self.backend_data.fps_texture.clone().map(FpsElement::new);
+            let background_element = self
+                .backend_data
+                .background_texture
+                .clone()
+                .map(BackgroundElement::new);
 
             let allocator = GbmAllocator::new(
                 device.gbm.clone(),
@@ -1191,11 +1246,39 @@ impl AnvilState<UdevData> {
                 #[cfg(feature = "debug")]
                 fps_element,
                 dmabuf_feedback,
+                background_element,
             };
 
             device.surfaces.insert(crtc, surface);
 
             self.schedule_initial_render(node, crtc, self.handle.clone());
+
+            let id = u32::from(crtc);
+            self.output_states.insert(
+                OutputId { 0: id },
+                crate::shell::output_manager::Output {
+                    mode: Some(output_manager::Mode::from(&connector.modes()[mode_id])),
+                    modes: connector
+                        .modes()
+                        .into_iter()
+                        .map(|output| output_manager::Mode::from(output))
+                        .collect(),
+                    current_mode: Some(mode_id),
+                    vrr_enabled: false,
+                    name: output_name,
+                    logical: Default::default(),
+                    transform: Default::default(),
+                    scale: Some(1.0),
+                    off: false,
+                    variable_refresh_rate: false,
+                    make,
+                    model,
+                    physical_size: Default::default(),
+                },
+            );
+
+            self.output_management_state
+                .notify_changes(self.output_states.clone());
         }
     }
 
@@ -1210,6 +1293,9 @@ impl AnvilState<UdevData> {
         } else {
             return;
         };
+
+        let id = OutputId { 0: u32::from(crtc) };
+        self.output_states.remove(&id);
 
         if let Some(pos) = device
             .non_desktop_connectors
@@ -1689,6 +1775,7 @@ fn render_surface<'a>(
     let scale = Scale::from(output.current_scale().fractional_scale());
 
     let mut custom_elements: Vec<CustomRenderElements<_>> = Vec::new();
+    let mut background_element: Option<CustomRenderElements<_>> = None;
 
     let mut maybe_window = None;
 
@@ -1765,6 +1852,13 @@ fn render_surface<'a>(
         }
     }
 
+    if let Some(element) = surface.background_element.as_mut() {
+        if let Some(mode) = output.current_mode() {
+            element.position(mode.size);
+        }
+        background_element = Some(CustomRenderElements::Background(element.clone()));
+    }
+
     #[cfg(feature = "debug")]
     if let Some(element) = surface.fps_element.as_mut() {
         element.update_fps(surface.fps.avg().round() as u32);
@@ -1772,8 +1866,13 @@ fn render_surface<'a>(
         custom_elements.push(CustomRenderElements::Fps(element.clone()));
     }
 
-    let (elements, clear_color) =
-        output_elements(output, window_elements, custom_elements, renderer);
+    let (elements, clear_color) = output_elements(
+        output,
+        window_elements,
+        custom_elements,
+        background_element,
+        renderer,
+    );
     let SurfaceCompositorRenderResult {
         rendered,
         states,

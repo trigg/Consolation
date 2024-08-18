@@ -13,7 +13,6 @@ use smithay::{
     render_elements,
     utils::{Physical, Point, Scale},
 };
-#[cfg(feature = "debug")]
 use smithay::{
     backend::renderer::{
         element::{Element, Id, RenderElement},
@@ -23,7 +22,7 @@ use smithay::{
     utils::{Buffer, Logical, Rectangle, Size, Transform},
 };
 
-pub static CLEAR_COLOR: [f32; 4] = [0.0, 0.0, 0.3, 1.0];
+pub static CLEAR_COLOR: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 pub static CLEAR_COLOR_FULLSCREEN: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
 
 pub struct PointerElement {
@@ -116,6 +115,90 @@ where
                 elements.into_iter().map(E::from).collect()
             }
         }
+    }
+}
+
+pub static BACKGROUND_PNG: &[u8] = include_bytes!("../consolation.png");
+
+#[derive(Debug, Clone)]
+
+pub struct BackgroundElement<T: Texture> {
+    texture: T,
+    id: Id,
+    position: Rectangle<i32, Physical>,
+    commit_counter: CommitCounter,
+}
+
+impl<T: Texture> BackgroundElement<T> {
+    pub fn new(texture: T) -> Self {
+        BackgroundElement {
+            id: Id::new(),
+            texture,
+            position: Rectangle::default(),
+            commit_counter: CommitCounter::default(),
+        }
+    }
+
+    /* Position self based on size of output */
+    pub fn position(&mut self, pos: Size<i32, Physical>) {
+        let x: i32 = pos.w / 2 - self.texture.width() as i32 / 2;
+        let y: i32 = pos.h / 2 - self.texture.height() as i32 / 2;
+        self.position = Rectangle::<i32, Physical> {
+            loc: (x, y).into(),
+            size: (self.texture.width() as i32, self.texture.height() as i32).into(),
+        };
+        self.commit_counter.increment();
+    }
+}
+impl<T> Element for BackgroundElement<T>
+where
+    T: Texture + 'static,
+{
+    fn id(&self) -> &Id {
+        &self.id
+    }
+
+    fn location(&self, _scale: Scale<f64>) -> Point<i32, Physical> {
+        (0, 0).into()
+    }
+
+    fn src(&self) -> Rectangle<f64, Buffer> {
+        Rectangle::from_loc_and_size((0, 0), (self.texture.width(), self.texture.height())).to_f64()
+    }
+
+    fn current_commit(&self) -> CommitCounter {
+        self.commit_counter
+    }
+
+    fn geometry(&self, _scale: Scale<f64>) -> Rectangle<i32, Physical> {
+        self.position.clone()
+    }
+}
+
+impl<R> RenderElement<R> for BackgroundElement<<R as Renderer>::TextureId>
+where
+    R: Renderer + ImportAll,
+    <R as Renderer>::TextureId: 'static,
+{
+    fn draw(
+        &self,
+        frame: &mut <R as Renderer>::Frame<'_>,
+        src: Rectangle<f64, Buffer>,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+        opaque_regions: &[Rectangle<i32, Physical>],
+    ) -> Result<(), R::Error> {
+        frame.render_texture_from_to(
+            &self.texture,
+            src,
+            dst,
+            &damage,
+            opaque_regions,
+            Transform::Normal,
+            1.0,
+        )?;
+
+        Ok(())
     }
 }
 

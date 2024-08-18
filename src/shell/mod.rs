@@ -41,6 +41,7 @@ use crate::{
 };
 
 mod element;
+pub(crate) mod output_manager;
 pub(crate) mod toplevel_manager;
 #[cfg(feature = "xwayland")]
 mod x11;
