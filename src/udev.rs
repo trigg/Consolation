@@ -86,11 +86,12 @@ use smithay::{
             DrmLease, DrmLeaseBuilder, DrmLeaseHandler, DrmLeaseRequest, DrmLeaseState,
             LeaseRejected,
         },
+        drm_syncobj::{supports_syncobj_eventfd, DrmSyncobjHandler, DrmSyncobjState},
     },
 };
 use smithay_drm_extras::{
+    display_info,
     drm_scanner::{DrmScanEvent, DrmScanner},
-    edid::EdidInfo,
 };
 use tracing::{debug, error, info, trace, warn};
 
@@ -125,6 +126,7 @@ pub struct UdevData {
     pub session: LibSeatSession,
     dh: DisplayHandle,
     dmabuf_state: Option<(DmabufState, DmabufGlobal)>,
+    syncobj_state: Option<DrmSyncobjState>,
     primary_gpu: DrmNode,
     gpus: GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>,
     backends: HashMap<DrmNode, BackendData>,
@@ -260,6 +262,7 @@ pub fn run_udev() {
     let data = UdevData {
         dh: display_handle.clone(),
         dmabuf_state: None,
+        syncobj_state: None,
         session,
         primary_gpu,
         gpus,
@@ -294,6 +297,23 @@ pub fn run_udev() {
     );
     libinput_context.udev_assign_seat(&state.seat_name).unwrap();
     let libinput_backend = LibinputInputBackend::new(libinput_context.clone());
+
+    // Expose syncobj protocol if supported by primary GPU
+    if let Some(primary_node) = state
+        .backend_data
+        .primary_gpu
+        .node_with_type(NodeType::Primary)
+        .and_then(|x| x.ok())
+    {
+        if let Some(backend) = state.backend_data.backends.get(&primary_node) {
+            let import_device = backend.drm.device_fd().clone();
+            if supports_syncobj_eventfd(&import_device) {
+                let syncobj_state =
+                    DrmSyncobjState::new::<AnvilState<UdevData>>(&display_handle, import_device);
+                state.backend_data.syncobj_state = Some(syncobj_state);
+            }
+        }
+    }
 
     /*
      * Bind all our objects that get driven by the event loop
@@ -401,7 +421,7 @@ pub fn run_udev() {
 
     #[cfg(feature = "debug")]
     {
-        let fps_image = image::io::Reader::with_format(
+        let fps_image = image::ImageReader::with_format(
             std::io::Cursor::new(FPS_NUMBERS_PNG),
             image::ImageFormat::Png,
         )
@@ -425,7 +445,7 @@ pub fn run_udev() {
     }
 
     {
-        let background_image = image::io::Reader::with_format(
+        let background_image = image::ImageReader::with_format(
             std::io::Cursor::new(BACKGROUND_PNG),
             image::ImageFormat::Png,
         )
@@ -618,7 +638,7 @@ impl DrmLeaseHandler for AnvilState<UdevData> {
                     })
                     .ok_or_else(LeaseRejected::default)?;
                 builder.add_plane(primary_plane.handle, primary_plane_claim);
-                if let Some((cursor, claim)) = planes.cursor.and_then(|plane| {
+                if let Some((cursor, claim)) = planes.cursor.iter().find_map(|plane| {
                     backend
                         .drm
                         .claim_plane(plane.handle, *crtc)
@@ -650,6 +670,13 @@ impl DrmLeaseHandler for AnvilState<UdevData> {
 }
 
 delegate_drm_lease!(AnvilState<UdevData>);
+
+impl DrmSyncobjHandler for AnvilState<UdevData> {
+    fn drm_syncobj_state(&mut self) -> &mut DrmSyncobjState {
+        self.backend_data.syncobj_state.as_mut().unwrap()
+    }
+}
+smithay::delegate_drm_syncobj!(AnvilState<UdevData>);
 
 pub type RenderSurface =
     GbmBufferedSurface<GbmAllocator<DrmDeviceFd>, Option<OutputPresentationFeedback>>;
@@ -1079,9 +1106,17 @@ impl AnvilState<UdevData> {
             })
             .unwrap_or(false);
 
-        let (make, model) = EdidInfo::for_connector(&device.drm, connector.handle())
-            .map(|info| (info.manufacturer, info.model))
-            .unwrap_or_else(|| ("Unknown".into(), "Unknown".into()));
+        let display_info = display_info::for_connector(&device.drm, connector.handle());
+
+        let make = display_info
+            .as_ref()
+            .and_then(|info| info.make())
+            .unwrap_or_else(|| "Unknown".into());
+
+        let model = display_info
+            .as_ref()
+            .and_then(|info| info.model())
+            .unwrap_or_else(|| "Unknown".into());
 
         if non_desktop {
             info!(

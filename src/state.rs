@@ -15,7 +15,6 @@ use crate::{
         },
         toplevel_manager::{ForeignToplevelHandler, ForeignToplevelManagerState},
     },
-    udev::UdevData,
 };
 use smithay::{
     backend::{
@@ -47,9 +46,12 @@ use smithay::{
     output::Output,
     reexports::{
         calloop::{generic::Generic, Interest, LoopHandle, Mode, PostAction},
-        wayland_protocols::xdg::decoration::{
-            self as xdg_decoration,
-            zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode,
+        wayland_protocols::{
+            wp::single_pixel_buffer,
+            xdg::decoration::{
+                self as xdg_decoration,
+                zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode,
+            },
         },
         wayland_server::{
             self,
@@ -101,6 +103,7 @@ use smithay::{
             },
         },
         shm::{ShmHandler, ShmState},
+        single_pixel_buffer::SinglePixelBufferState,
         socket::ListeningSocketSource,
         tablet_manager::{TabletManagerState, TabletSeatHandler},
         text_input::TextInputManagerState,
@@ -174,6 +177,7 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     pub output_management_state: OutputManagementManagerState,
     #[cfg(feature = "xwayland")]
     pub xwayland_shell_state: xwayland_shell::XWaylandShellState,
+    pub single_pixel_buffer_state: SinglePixelBufferState,
 
     pub dnd_icon: Option<WlSurface>,
 
@@ -581,7 +585,7 @@ impl<BackendData: Backend> AnvilState<BackendData> {
         let mut output_state = None;
         for (_key, value) in self.output_states.iter() {
             if value.name == *name {
-                output_state = Some((value.clone()));
+                output_state = Some(value.clone());
                 break;
             }
         }
@@ -649,6 +653,8 @@ impl<BackendData: Backend> OutputManagementHandler for AnvilState<BackendData> {
 }
 smithay::delegate_xdg_foreign!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
 
+smithay::delegate_single_pixel_buffer!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
+
 impl<BackendData: Backend + 'static> AnvilState<BackendData> {
     pub fn init(
         display: Display<AnvilState<BackendData>>,
@@ -710,6 +716,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         let presentation_state = PresentationState::new::<Self>(&dh, clock.id() as u32);
         let fractional_scale_manager_state = FractionalScaleManagerState::new::<Self>(&dh);
         let xdg_foreign_state = XdgForeignState::new::<Self>(&dh);
+        let single_pixel_buffer_state = SinglePixelBufferState::new::<Self>(&dh);
         let output_management_manager_state =
             OutputManagementManagerState::new::<Self, _>(&dh, |_| true);
         TextInputManagerState::new::<Self>(&dh);
@@ -772,6 +779,7 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             presentation_state,
             fractional_scale_manager_state,
             xdg_foreign_state,
+            single_pixel_buffer_state,
             dnd_icon: None,
             suppressed_keys: Vec::new(),
             cursor_status: CursorImageStatus::default_named(),

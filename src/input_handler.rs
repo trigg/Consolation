@@ -102,7 +102,6 @@ impl<BackendData: Backend> AnvilState<BackendData> {
     fn keyboard_key_to_action<B: InputBackend>(&mut self, evt: B::KeyboardKeyEvent) -> KeyAction {
         let keycode = evt.key_code();
         let state = evt.state();
-        debug!(keycode, ?state, "key");
         let serial = SCOUNTER.next_serial();
         let time = Event::time_msec(&evt);
         let mut suppressed_keys = self.suppressed_keys.clone();
@@ -674,7 +673,7 @@ impl AnvilState<UdevData> {
                 &MotionEvent {
                     location: pointer_location,
                     serial: SCOUNTER.next_serial(),
-                    time: 0,
+                    time: self.clock.now().as_millis(),
                 },
             );
 
@@ -743,7 +742,7 @@ impl AnvilState<UdevData> {
                 &MotionEvent {
                     location: pointer_location,
                     serial: SCOUNTER.next_serial(),
-                    time: 0,
+                    time: self.clock.now().as_millis(),
                 },
             );
             pointer.frame(self);
