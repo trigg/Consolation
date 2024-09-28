@@ -1,3 +1,4 @@
+use notify::{RecursiveMode, Watcher};
 use std::{
     collections::hash_map::HashMap,
     io,
@@ -14,12 +15,15 @@ use crate::{
     state::{post_repaint, take_presentation_feedback, AnvilState, Backend},
 };
 use crate::{shell::toplevel_manager, state::SurfaceDmabufFeedback};
-use image::GenericImageView;
 #[cfg(feature = "renderer_sync")]
 use smithay::backend::drm::compositor::PrimaryPlaneElement;
 #[cfg(feature = "egl")]
 use smithay::backend::renderer::ImportEgl;
-use smithay::backend::renderer::{multigpu::MultiTexture, ImportMem};
+use smithay::{
+    backend::renderer::{multigpu::MultiTexture, ImportMem},
+    reexports::drm::control::connector::Handle,
+    utils::Size,
+};
 use smithay::{
     backend::{
         allocator::{
@@ -419,7 +423,6 @@ pub fn run_udev() {
         .single_renderer(&primary_gpu)
         .unwrap();
 
-    #[cfg(feature = "debug")]
     {
         let fps_image = image::ImageReader::with_format(
             std::io::Cursor::new(FPS_NUMBERS_PNG),
@@ -462,7 +465,7 @@ pub fn run_udev() {
                     .into(),
                 false,
             )
-            .expect("Unable to upload FPS texture");
+            .expect("Unable to upload Background texture");
 
         for backend in state.backend_data.backends.values_mut() {
             for surface in backend.surfaces.values_mut() {
@@ -579,7 +582,105 @@ pub fn run_udev() {
         if result.is_err() {
             state.running.store(false, Ordering::SeqCst);
         } else {
-            //state.space.refresh();
+            match state.config_watcher.try_recv() {
+                Ok(event) => match event {
+                    Ok(event) => match event.kind {
+                        notify::EventKind::Access(_access_kind) => {}
+                        notify::EventKind::Create(_create_kind) => {
+                            info!("Config create");
+                        }
+                        notify::EventKind::Modify(_modify_kind) => {
+                            match confy::load("consolation", None) {
+                                Ok(config) => {
+                                    state.config.set_from(config);
+                                    info!("Configuration file changed");
+                                }
+                                Err(err) => {
+                                    error!("Unable to load new config : {:?}", err)
+                                }
+                            };
+                        }
+                        notify::EventKind::Remove(_remove_kind) => {
+                            warn!("Config removed");
+                            // Some editors (like vim) delete the file in the process of writing. Start a new watch
+                            let config_path =
+                                confy::get_configuration_file_path("consolation", None)
+                                    .expect("Unable to find config path");
+                            state
+                                .config_watcher_obj
+                                .watch(&config_path, RecursiveMode::NonRecursive)
+                                .expect("Unable to watch config file");
+                        }
+                        notify::EventKind::Other => {}
+                        notify::EventKind::Any => {}
+                    },
+                    Err(err) => error!("Watcher error : {:?}", err),
+                },
+                Err(_) => {}
+            }
+
+            // Update from output config
+            if state.outputs_config.clone().is_some() {
+                event_loop.handle().insert_idle(|state| {
+                    let config = state.outputs_config.clone().unwrap();
+                    // This feels like a really stupid way to do it but it's the closest to working
+
+                    for (&_node, backend) in state.backend_data.backends.iter() {
+                        for (&_crtc, surface) in &backend.surfaces {
+                            // Find the output in new config
+                            'output_for: for output in &config.0 {
+                                if let Some((output_actual, mut output_state)) =
+                                    state.get_output_for_name(&output.name)
+                                {
+                                    if surface.name == output.name {
+                                        // Successfully found the device, node, surface, and new config that match
+                                        let surf = surface.compositor.surface();
+
+                                        if let Some(output_mode) = output.mode {
+                                            let mut index = 0;
+                                            // Iterate DRM modes until one matches the new config
+                                            for mode in surf.get_modes(surface.connector).unwrap() {
+                                                let wl_mode = WlMode::from(mode);
+                                                if wl_mode.size.w as u16 == output_mode.width
+                                                    && wl_mode.size.h as u16 == output_mode.height
+                                                    && wl_mode.refresh
+                                                        == output_mode.refresh_rate as i32
+                                                {
+                                                    // Set DRM mode
+                                                    surf.use_mode(mode)
+                                                        .expect("Failed setting resolution");
+                                                    // Set WL output details
+                                                    output_actual.change_current_state(
+                                                        Some(wl_mode),
+                                                        Some(output.transform),
+                                                        None,
+                                                        None,
+                                                    );
+                                                    // Alter output manager state and send
+                                                    let s_mode = output_manager::Mode::from(&mode);
+                                                    output_state.transform = output.transform;
+                                                    output_state.current_mode = Some(index);
+                                                    output_state.mode = Some(s_mode);
+
+                                                    // Skip out to the next device
+                                                    break 'output_for;
+                                                }
+                                                index += 1;
+                                            }
+                                        }
+                                        warn!("Didn't set mode, could not find");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    state.outputs_config = None;
+                    state
+                        .output_management_state
+                        .notify_changes(state.output_states.clone());
+                });
+            }
+
             let size = state.elements.len();
             state.elements.retain(|window| window.alive());
             if size != state.elements.len() {
@@ -870,12 +971,12 @@ struct SurfaceData {
     render_node: DrmNode,
     global: Option<GlobalId>,
     compositor: SurfaceComposition,
-    #[cfg(feature = "debug")]
     fps: fps_ticker::Fps,
-    #[cfg(feature = "debug")]
     fps_element: Option<FpsElement<MultiTexture>>,
     background_element: Option<BackgroundElement<MultiTexture>>,
     dmabuf_feedback: Option<DrmSurfaceDmabufFeedback>,
+    name: String,
+    connector: Handle,
 }
 
 impl Drop for SurfaceData {
@@ -1042,23 +1143,7 @@ impl AnvilState<UdevData> {
         Ok(())
     }
 
-    fn output_changed_resolution(&mut self) {
-        let device = if let Some(device) = self
-            .backend_data
-            .backends
-            .get_mut(&self.backend_data.primary_gpu)
-        {
-            device
-        } else {
-            return;
-        };
-        for (connector, crtc) in device.drm_scanner.crtcs() {
-            let surface = device.surfaces.get(&crtc);
-            //let current_crtc_mode = surface.map(|surface| surface.compositor.pending_mode());
-        }
-    }
-
-    fn connector_connected(
+    pub fn connector_connected(
         &mut self,
         node: DrmNode,
         connector: connector::Info,
@@ -1276,12 +1361,12 @@ impl AnvilState<UdevData> {
                 render_node: device.render_node,
                 global: Some(global),
                 compositor,
-                #[cfg(feature = "debug")]
                 fps: fps_ticker::Fps::default(),
-                #[cfg(feature = "debug")]
                 fps_element,
                 dmabuf_feedback,
                 background_element,
+                name: output_name.clone(),
+                connector: connector.handle(),
             };
 
             device.surfaces.insert(crtc, surface);
@@ -1317,7 +1402,7 @@ impl AnvilState<UdevData> {
         }
     }
 
-    fn connector_disconnected(
+    pub fn connector_disconnected(
         &mut self,
         node: DrmNode,
         connector: connector::Info,
@@ -1563,8 +1648,15 @@ impl AnvilState<UdevData> {
             //
             // A more complete solution could work on a sliding window analyzing past repaints
             // and do some prediction for the next repaint.
-            let repaint_delay =
-                Duration::from_millis(((1_000_000f32 / output_refresh as f32) * 0.6f32) as u64);
+
+            let repaint_delay = match self.config.framerate_limit {
+                Some(limit) => Duration::from_millis(
+                    ((1_000_000f32 / (limit * 1000f64) as f32) * 0.6f32) as u64,
+                ),
+                None => {
+                    Duration::from_millis(((1_000_000f32 / output_refresh as f32) * 0.6f32) as u64)
+                }
+            };
 
             let timer = if self.backend_data.primary_gpu != surface.render_node {
                 // However, if we need to do a copy, that might not be enough.
@@ -1691,6 +1783,7 @@ impl AnvilState<UdevData> {
             &self.dnd_icon,
             &mut self.cursor_status,
             &self.clock,
+            self.config.clone(),
         );
         let reschedule = match &result {
             Ok(has_rendered) => !has_rendered,
@@ -1806,6 +1899,7 @@ fn render_surface<'a>(
     dnd_icon: &Option<wl_surface::WlSurface>,
     cursor_status: &mut CursorImageStatus,
     clock: &Clock<Monotonic>,
+    config: crate::state::Configuration,
 ) -> Result<bool, SwapBuffersError> {
     let scale = Scale::from(output.current_scale().fractional_scale());
 
@@ -1889,16 +1983,42 @@ fn render_surface<'a>(
 
     if let Some(element) = surface.background_element.as_mut() {
         if let Some(mode) = output.current_mode() {
-            element.position(mode.size);
+            match output.current_transform() {
+                Transform::Normal => element.position(mode.size),
+                Transform::_90 => {
+                    let h = mode.size.w;
+                    let w = mode.size.h;
+                    element.position(Size::from((w, h)))
+                }
+                Transform::_180 => element.position(mode.size),
+                Transform::_270 => {
+                    let h = mode.size.w;
+                    let w = mode.size.h;
+                    element.position(Size::from((w, h)))
+                }
+                Transform::Flipped => element.position(mode.size),
+                Transform::Flipped90 => {
+                    let h = mode.size.w;
+                    let w = mode.size.h;
+                    element.position(Size::from((w, h)))
+                }
+                Transform::Flipped180 => element.position(mode.size),
+                Transform::Flipped270 => {
+                    let h = mode.size.w;
+                    let w = mode.size.h;
+                    element.position(Size::from((w, h)))
+                }
+            };
         }
         background_element = Some(CustomRenderElements::Background(element.clone()));
     }
 
-    #[cfg(feature = "debug")]
     if let Some(element) = surface.fps_element.as_mut() {
         element.update_fps(surface.fps.avg().round() as u32);
         surface.fps.tick();
-        custom_elements.push(CustomRenderElements::Fps(element.clone()));
+        if config.show_fps {
+            custom_elements.push(CustomRenderElements::Fps(element.clone()));
+        }
     }
 
     let (elements, clear_color) = output_elements(

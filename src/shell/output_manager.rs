@@ -9,6 +9,7 @@ use smithay::reexports::wayland_protocols_wlr::output_management::v1::server::{
     zwlr_output_manager_v1, zwlr_output_mode_v1,
 };
 use smithay::reexports::wayland_server::backend::ClientId;
+use smithay::reexports::wayland_server::protocol::wl_output;
 use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, WEnum,
 };
@@ -80,7 +81,7 @@ impl From<&control::Mode> for Mode {
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
 pub struct OutputId(pub u32);
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Outputs(pub Vec<Output>);
 
 impl FromIterator<Output> for Outputs {
@@ -186,7 +187,6 @@ impl OutputManagementManagerState {
                     }
                 }
 
-                // TTY outputs can't change modes I think, however, winit and virtual outputs can.
                 let modes_changed = old.modes != conf.modes;
                 if modes_changed {
                     changed = true;
@@ -564,7 +564,6 @@ where
                 }
 
                 state.apply_output_config(new_config.into_values().collect());
-                // FIXME: verify that it had been applied successfully (which may be difficult).
                 conf.succeeded();
             }
             zwlr_output_configuration_v1::Request::Test => {
@@ -725,9 +724,19 @@ where
             zwlr_output_configuration_head_v1::Request::SetPosition { x: _, y: _ } => {
                 // Do nothing
             }
-            zwlr_output_configuration_head_v1::Request::SetTransform { transform: _ } => {
-                // TODO Transform
-                //new_config.transform = transform.into();
+            zwlr_output_configuration_head_v1::Request::SetTransform { transform } => {
+                new_config.transform = match transform {
+                    WEnum::Value(wl_output::Transform::Normal) => Transform::Normal,
+                    WEnum::Value(wl_output::Transform::_90) => Transform::_90,
+                    WEnum::Value(wl_output::Transform::_180) => Transform::_180,
+                    WEnum::Value(wl_output::Transform::_270) => Transform::_270,
+                    WEnum::Value(wl_output::Transform::Flipped) => Transform::Flipped,
+                    WEnum::Value(wl_output::Transform::Flipped90) => Transform::Flipped90,
+                    WEnum::Value(wl_output::Transform::Flipped180) => Transform::Flipped180,
+                    WEnum::Value(wl_output::Transform::Flipped270) => Transform::Flipped270,
+                    WEnum::Value(_) => Transform::Normal,
+                    WEnum::Unknown(_) => Transform::Normal,
+                };
             }
             zwlr_output_configuration_head_v1::Request::SetScale { scale } => {
                 if scale <= 0. {

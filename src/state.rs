@@ -1,10 +1,11 @@
+use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     os::unix::io::OwnedFd,
     sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
-
 use tracing::{info, warn};
 
 use crate::{
@@ -46,12 +47,9 @@ use smithay::{
     output::Output,
     reexports::{
         calloop::{generic::Generic, Interest, LoopHandle, Mode, PostAction},
-        wayland_protocols::{
-            wp::single_pixel_buffer,
-            xdg::decoration::{
-                self as xdg_decoration,
-                zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode,
-            },
+        wayland_protocols::xdg::decoration::{
+            self as xdg_decoration,
+            zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode,
         },
         wayland_server::{
             self,
@@ -142,6 +140,30 @@ impl ClientData for ClientState {
     fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Configuration {
+    pub framerate_limit: Option<f64>,
+    pub show_fps: bool,
+    pub background: BackgroundConfiguration,
+}
+
+impl Configuration {
+    pub fn set_from(&mut self, other: Configuration) {
+        self.framerate_limit = other.framerate_limit;
+        self.show_fps = other.show_fps;
+        self.background = other.background;
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub enum BackgroundConfiguration {
+    #[default]
+    None,
+    Color(String),
+    Image(String),
+    ImageScaled(String),
+}
+
 #[derive(Debug)]
 pub struct AnvilState<BackendData: Backend + 'static> {
     pub backend_data: BackendData,
@@ -193,10 +215,13 @@ pub struct AnvilState<BackendData: Backend + 'static> {
     pub xwm: Option<X11Wm>,
     #[cfg(feature = "xwayland")]
     pub xdisplay: Option<u32>,
+    pub outputs_config: Option<Outputs>,
 
-    #[cfg(feature = "debug")]
-    pub renderdoc: Option<renderdoc::RenderDoc<renderdoc::V141>>,
+    pub config: Configuration,
+    pub config_watcher: std::sync::mpsc::Receiver<Result<Event, notify::Error>>,
+
     pub toplevel_manager: ForeignToplevelManagerState,
+    pub config_watcher_obj: notify::INotifyWatcher,
 }
 
 delegate_compositor!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
@@ -578,10 +603,7 @@ delegate_xwayland_keyboard_grab!(@<BackendData: Backend + 'static> AnvilState<Ba
 delegate_xwayland_shell!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
 
 impl<BackendData: Backend> AnvilState<BackendData> {
-    pub fn get_output_for_name(
-        &mut self,
-        name: &String,
-    ) -> Option<(Output, output_manager::Output)> {
+    pub fn get_output_for_name(&self, name: &String) -> Option<(Output, output_manager::Output)> {
         let mut output_state = None;
         for (_key, value) in self.output_states.iter() {
             if value.name == *name {
@@ -613,42 +635,7 @@ impl<BackendData: Backend> OutputManagementHandler for AnvilState<BackendData> {
     }
 
     fn apply_output_config(&mut self, config: Outputs) {
-        for output in config.0 {
-            if let Some((output_actual, output_state)) = self.get_output_for_name(&output.name) {
-                let mut chosen_mode = None;
-                if let Some(output_mode) = output.mode {
-                    /*chosen_mode = Some(smithay::output::Mode {
-                        size: (output_mode.width as i32, output_mode.height as i32).into(),
-                        refresh: output_mode.refresh_rate as i32,
-                    });*/
-                    for mode in output_actual.modes() {
-                        println!(
-                            "Mode check :: {} {} :: {} {} :: {} {}",
-                            mode.size.w,
-                            output_mode.width,
-                            mode.size.h,
-                            output_mode.height,
-                            mode.refresh,
-                            output_mode.refresh_rate
-                        );
-                        if mode.size.w as u16 == output_mode.width
-                            && mode.size.h as u16 == output_mode.height
-                            && mode.refresh == output_mode.refresh_rate as i32
-                        {
-                            chosen_mode = Some(mode);
-                            break;
-                        }
-                    }
-                } else {
-                    println!("Unable to unwrap mode : {:?}", output.mode);
-                }
-                println!("Changing output {:?} mode : {:?}", output.name, chosen_mode);
-                // Scale and location have no function in this compositor
-                // TODO Transform
-                output_actual.change_current_state(chosen_mode, None, None, None);
-            }
-        }
-        //println!("Config changed....{:?}", config);
+        self.outputs_config = Some(config);
     }
 }
 smithay::delegate_xdg_foreign!(@<BackendData: Backend + 'static> AnvilState<BackendData>);
@@ -754,6 +741,29 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
         #[cfg(feature = "xwayland")]
         XWaylandKeyboardGrabState::new::<Self>(&dh.clone());
 
+        // Config Watcher
+        let config_path = confy::get_configuration_file_path("consolation", None)
+            .expect("Unable to find config path");
+
+        // Load the config or have a default file
+        let config = match confy::load("consolation", None) {
+            Ok(config) => config,
+            Err(_) => {
+                let config = Configuration::default();
+                confy::store("consolation", None, config.clone())
+                    .unwrap_or_else(|err| println!("Unable to save config: {:?}", err));
+                config
+            }
+        };
+
+        // Create Watcher
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut watcher: RecommendedWatcher =
+            Watcher::new(tx, notify::Config::default()).expect("Unable start config watcher");
+        watcher
+            .watch(&config_path, RecursiveMode::NonRecursive)
+            .expect("Unable to watch config file");
+
         AnvilState {
             backend_data,
             display_handle: dh,
@@ -793,11 +803,13 @@ impl<BackendData: Backend + 'static> AnvilState<BackendData> {
             xwm: None,
             #[cfg(feature = "xwayland")]
             xdisplay: None,
-            #[cfg(feature = "debug")]
-            renderdoc: renderdoc::RenderDoc::new().ok(),
             toplevel_manager,
             output_management_state: output_management_manager_state,
             output_states: HashMap::new(),
+            config: config,
+            config_watcher: rx,
+            config_watcher_obj: watcher,
+            outputs_config: None,
         }
     }
 
